@@ -1,14 +1,14 @@
 import { useState, useTransition } from "react"
-import { CheckIcon, CircleAlertIcon, MenuIcon, PrinterIcon, XIcon } from "lucide-react"
+import { CheckIcon, CircleAlertIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { AnimatedButton } from "@/components/ui/animated-button"
+import { MacOSSidebar } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
 import { Toggle } from "@/components/ui/toggle"
-import { cn } from "@/lib/utils"
 import { useRecipients } from "@/recipients/context"
 
 type View = "overview" | "scan" | "recipients" | "jobs" | "supplies"
@@ -277,31 +277,6 @@ function RecipientsScan() {
   )
 }
 
-function NavButton({
-  label,
-  active,
-  onClick,
-}: {
-  label: string
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={cn(
-        "flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors duration-150",
-        active
-          ? "bg-sidebar-accent text-sidebar-accent-foreground"
-          : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-      )}
-    >
-      {label}
-    </button>
-  )
-}
-
 function OverviewView() {
   const { state } = useRecipients()
   const adf = adfView(state.scanner, state.adf)
@@ -547,104 +522,58 @@ function viewCopy(view: View): { title: string; sub: string } {
   }
 }
 
+const NAV_ITEMS = ["Overview", "Supplies", "Scan", "Recipients", "Scan jobs"] as const
+const NAV_VIEWS: View[] = ["overview", "supplies", "scan", "recipients", "jobs"]
+
 export function RecipientsDashboard() {
-  const { state, actions } = useRecipients()
+  const { actions } = useRecipients()
   const [view, setView] = useState<View>("overview")
-  const [navOpen, setNavOpen] = useState(false)
   const copy = viewCopy(view)
 
-  const go = (next: View) => {
-    setView(next)
-    setNavOpen(false)
-  }
-
-  const nav = (
-    <>
-      <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Monitor</p>
-      <NavButton label="Overview" active={view === "overview"} onClick={() => go("overview")} />
-      <NavButton label="Supplies" active={view === "supplies"} onClick={() => go("supplies")} />
-      <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Actions</p>
-      <NavButton label="Scan" active={view === "scan"} onClick={() => go("scan")} />
-      <NavButton label="Recipients" active={view === "recipients"} onClick={() => go("recipients")} />
-      <NavButton label="Scan jobs" active={view === "jobs"} onClick={() => go("jobs")} />
-    </>
-  )
-
   return (
-    <div className="flex min-h-dvh bg-background">
-      {navOpen ? (
-        <button
-          type="button"
-          className="fixed inset-0 z-20 bg-black/40 md:hidden"
-          aria-label="Close menu"
-          onClick={() => setNavOpen(false)}
-        />
-      ) : null}
-
-      <aside
-        className={cn(
-          "fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform duration-200",
-          navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        )}
+    <div className="min-h-dvh bg-background p-3">
+      <MacOSSidebar
+        items={[...NAV_ITEMS]}
+        className="min-h-[calc(100dvh-1.5rem)] w-full max-w-none rounded-2xl shadow-none"
+        onSelect={(index) => {
+          const next = NAV_VIEWS[index]
+          if (next) {
+            setView(next)
+          }
+        }}
+        onAdd={() => setView("scan")}
       >
-        <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
-          <PrinterIcon className="size-5 text-primary" aria-hidden="true" />
-          <span className="text-sm font-semibold">NexDash Print</span>
-          <button
-            type="button"
-            className="ml-auto rounded-md p-1 md:hidden"
-            aria-label="Close menu"
-            onClick={() => setNavOpen(false)}
-          >
-            <XIcon className="size-4" />
-          </button>
-        </div>
-        <nav className="flex flex-1 flex-col gap-0.5 p-2">{nav}</nav>
-        <p className="border-t border-sidebar-border px-4 py-3 text-[11px] text-muted-foreground">
-          {state.bridgeOnline ? "Bridge seen recently" : "Bridge offline"}
-        </p>
-      </aside>
-
-      <div className="flex min-h-dvh min-w-0 flex-1 flex-col md:ml-56">
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
-            <button
-              type="button"
-              className="rounded-md p-1 md:hidden"
-              aria-label="Open menu"
-              onClick={() => setNavOpen(true)}
-            >
-              <MenuIcon className="size-5" />
-            </button>
+        <div className="flex min-h-full flex-col py-3 pr-3">
+          <header className="mb-6 flex items-center justify-between gap-3">
             <div className="min-w-0">
               <h1 className="text-base font-semibold">{copy.title}</h1>
               <p className="text-xs text-muted-foreground">{copy.sub}</p>
             </div>
+            <div className="flex items-center gap-2">
+              <AnimatedButton type="button" variant="outline" size="sm" onClick={() => void actions.refresh()}>
+                Refresh
+              </AnimatedButton>
+              <SwitchMode
+                width={72}
+                height={36}
+                darkColor="#111"
+                lightColor="#F9F9F9"
+                knobDarkColor="#1C1C1C"
+                knobLightColor="#F3F3F7"
+                borderDarkColor="#444"
+                borderLightColor="#DDD"
+              />
+            </div>
+          </header>
+          <div className="flex-1">
+            {view === "overview" ? <OverviewView /> : null}
+            {view === "scan" ? <ScanView /> : null}
+            {view === "recipients" ? <RecipientsView /> : null}
+            {view === "jobs" ? <JobsView /> : null}
+            {view === "supplies" ? <SuppliesView /> : null}
           </div>
-          <div className="flex items-center gap-2">
-            <AnimatedButton type="button" variant="outline" size="sm" onClick={() => void actions.refresh()}>
-              Refresh
-            </AnimatedButton>
-            <SwitchMode
-              width={72}
-              height={36}
-              darkColor="#111"
-              lightColor="#F9F9F9"
-              knobDarkColor="#1C1C1C"
-              knobLightColor="#F3F3F7"
-              borderDarkColor="#444"
-              borderLightColor="#DDD"
-            />
-          </div>
-        </header>
-        <main className="flex-1 px-4 py-6 md:px-6">
-          {view === "overview" ? <OverviewView /> : null}
-          {view === "scan" ? <ScanView /> : null}
-          {view === "recipients" ? <RecipientsView /> : null}
-          {view === "jobs" ? <JobsView /> : null}
-          {view === "supplies" ? <SuppliesView /> : null}
-        </main>
-      </div>
+        </div>
+      </MacOSSidebar>
     </div>
   )
 }

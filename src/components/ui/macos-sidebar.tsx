@@ -9,8 +9,6 @@ export interface MacOSSidebarProps {
   initialSelectedIndex?: number
   children?: ReactNode
   className?: string
-  onSelect?: (index: number) => void
-  onAdd?: () => void
 }
 
 export function MacOSSidebar({
@@ -19,30 +17,29 @@ export function MacOSSidebar({
   initialSelectedIndex = 0,
   children,
   className = "",
-  onSelect,
-  onAdd,
 }: MacOSSidebarProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState<number>(initialSelectedIndex)
+  const [selectedIndex, setSelectedIndex] =
+    useState<number>(initialSelectedIndex)
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen)
 
   return (
     <div
-      className={`theme-injected bg-muted relative flex w-full overflow-hidden rounded-lg p-3 sm:min-w-[480px] ${className}`}
+      className={`flex bg-neutral-200 dark:bg-neutral-900 rounded-3xl p-3 relative w-full sm:min-w-[480px] overflow-hidden ${className}`}
     >
       <motion.div
         animate={{
           width: isOpen ? 240 : 64,
         }}
         transition={{ type: "spring", bounce: 0.4, duration: 0.8 }}
-        className={`flex shrink-0 flex-col items-start rounded-lg p-2 transition-colors duration-900 ease-out ${
-          isOpen ? "bg-background" : "bg-transparent"
+        className={`p-2 rounded-2xl shrink-0 flex flex-col items-start transition-colors duration-900 ease-out ${
+          isOpen ? "bg-neutral-100 dark:bg-neutral-800" : "bg-transparent"
         }`}
       >
         <div
-          className={`flex w-full items-center ${
+          className={`flex items-center w-full ${
             isOpen ? "justify-end gap-4" : "justify-center"
-          } text-muted-foreground shrink-0 p-2`}
+          } text-neutral-700 dark:text-neutral-300 p-2 shrink-0`}
         >
           <AnimatePresence>
             {isOpen && (
@@ -55,14 +52,13 @@ export function MacOSSidebar({
                 <HugeiconsIcon
                   icon={PlusSignIcon}
                   className="size-5 cursor-pointer"
-                  onClick={() => onAdd?.()}
                 />
               </motion.div>
             )}
           </AnimatePresence>
           <motion.div
             layout
-            className="flex shrink-0 items-center justify-center"
+            className="shrink-0 flex items-center justify-center"
           >
             <HugeiconsIcon
               icon={SidebarLeftIcon}
@@ -79,7 +75,7 @@ export function MacOSSidebar({
               animate={{ opacity: 1, filter: "blur(0px)" }}
               exit={{ opacity: 0, filter: "blur(4px)" }}
               transition={{ duration: 0.2, ease: "easeOut" }}
-              className="relative z-10 mt-4 flex w-full flex-col gap-2 whitespace-nowrap"
+              className="flex flex-col gap-2 mt-4 w-full relative z-10 whitespace-nowrap"
               onMouseLeave={() => setHoveredIndex(null)}
             >
               {items.map((item, index) => (
@@ -87,15 +83,12 @@ export function MacOSSidebar({
                   key={item}
                   className="relative cursor-pointer"
                   onMouseEnter={() => setHoveredIndex(index)}
-                  onClick={() => {
-                    setSelectedIndex(index)
-                    onSelect?.(index)
-                  }}
+                  onClick={() => setSelectedIndex(index)}
                 >
                   <AnimatePresence>
                     {selectedIndex === index && (
                       <motion.div
-                        className="bg-accent absolute inset-0 z-0 rounded-lg"
+                        className="absolute inset-0 z-0 bg-neutral-200 dark:bg-neutral-700 rounded-md"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -106,8 +99,8 @@ export function MacOSSidebar({
                   <p
                     className={`relative z-10 px-5 py-3 tracking-tight ${
                       selectedIndex === index
-                        ? "text-foreground font-medium"
-                        : "text-muted-foreground"
+                        ? "text-neutral-900 dark:text-neutral-100 font-medium"
+                        : "text-neutral-700 dark:text-neutral-200/50"
                     }`}
                   >
                     {item}
@@ -116,7 +109,7 @@ export function MacOSSidebar({
                     {hoveredIndex === index && selectedIndex !== index && (
                       <motion.span
                         layoutId="sidebar-hover-bg"
-                        className="bg-accent/50 absolute inset-0 z-0 rounded-lg"
+                        className="absolute inset-0 z-0 bg-neutral-200/50 dark:bg-neutral-900/50 rounded-md"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
@@ -135,7 +128,7 @@ export function MacOSSidebar({
         </AnimatePresence>
       </motion.div>
 
-      <div className="z-0 h-full min-h-full w-full flex-1 overflow-y-auto pl-4 lg:pl-8">
+      <div className="flex-1 w-full h-full min-h-full overflow-y-auto z-0 pl-4 lg:pl-8">
         {children}
       </div>
     </div>

@@ -1,18 +1,12 @@
-import { SwitchMode } from "./original"
+import { MacOSSidebar } from "./original"
 
-export default function SwitchModeDemo() {
+const DEMO_ITEMS = ["Canvas 1", "Canvas 2", "Canvas 3", "Canvas 4", "Canvas 5"]
+
+export default function MacOSSidebarDemo() {
   return (
-    <div className="flex items-center justify-center">
-      <SwitchMode
-        width={180}
-        height={90}
-        darkColor="#111"
-        lightColor="#F9F9F9"
-        knobDarkColor="#1C1C1C"
-        knobLightColor="#F3F3F7"
-        borderDarkColor="#444"
-        borderLightColor="#DDD"
-      />
-    </div>
+    <MacOSSidebar
+      items={DEMO_ITEMS}
+      className="h-[600px] w-[800px] max-w-full shadow-xl"
+    />
   )
 }
