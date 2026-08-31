@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+.env
+.env.local
+esp32/wifi.go
+esp8266/bridge/secrets.h
+bin
+__pycache__
+*.pyc
+.DS_Store

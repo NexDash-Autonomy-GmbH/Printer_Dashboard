@@ -96,60 +96,34 @@ Security: HTTPS for the public API. The bridge token is only accepted as `Author
 
 Tests: `go test ./internal/realtime ./internal/bridge ./cmd/api`.
 
-## Cloud UI + ESP32 (Go)
+## Production (laptop can be off)
 
-The webpage can live on GitHub Pages. The Xerox cannot. An ESP32 (firmware in Go) stays on the office Wi-Fi, polls the API, scans, and posts the PDF back.
+The webpage and the API stay up on Cloudflare. The Xerox does not. Something on the NexDash Wi-Fi has to press the scanner, which is the ESP8266 left at the office on a USB charger.
 
 ```
-Browser (anywhere) → GitHub Pages UI → Go API
-ESP32 on NexDash Wi-Fi → Xerox 192.168.68.52
-ESP32 → Go API (outbound HTTPS)
+Browser (anywhere) → https://printer-dashboard.pages.dev
+                  → https://printer-api.nexdash.workers.dev
+ESP8266 on NexDash Wi-Fi → Xerox 192.168.68.52
+ESP8266 → Worker API (HTTPS long-poll + PDF POST)
+Worker → Gmail SMTP as the Workspace sender
 ```
+
+ngrok (`https://cb21-89-245-192-80.ngrok-free.app`) is a tunnel to this Mac's port 8765. It dies when the lid closes. Do not use it as prod.
+
+Flash `esp8266/bridge` with `secrets.h` (gitignored): office SSID, `API_BASE` `https://printer-api.nexdash.workers.dev`, and the same `BRIDGE_TOKEN` stored in Wrangler secrets. Leave the board at the office. Scan from the Pages URL after `bridge_online` is true.
 
 ```bash
-go run ./cmd/api          # API on :8780, also serves dist/
-```
-
-Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI. Set `BRIDGE_TOKEN` to a long random string and put the same value in `esp8266/bridge/secrets.h`. Leave `CORS_ORIGINS` empty unless the UI is on another host.
-
-### Cloudflare Pages (free)
-
-Live: https://printer-dashboard.pages.dev/
-
-The UI builds to `dist/` and deploys with Wrangler:
-
-```bash
-npm run build
+VITE_API_BASE=https://printer-api.nexdash.workers.dev npm run build
 npx wrangler pages deploy dist --project-name printer-dashboard
+npx wrangler deploy -c api/wrangler.jsonc
 ```
 
-GitHub Action `.github/workflows/pages.yml` does the same on push to `main`. Add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Optional: `VITE_API_BASE` so Scan talks to the Go API instead of the Pages origin.
+GitHub Action `.github/workflows/pages.yml` rebuilds the UI on push. Repo secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `VITE_API_BASE`.
 
-The Pages URL only hosts the webpage. Scan still needs the Go API plus an ESP32 or office-agent on the Xerox LAN.
+Local office fallback if the chip is not plugged in: `python3 xerox_scan.py dash` on a machine that can ping `192.168.68.52`, or `go run ./cmd/office-agent` with `API_BASE` and `BRIDGE_TOKEN`.
 
-Flash the ESP32 from `esp32/README.md`. Until TinyGo is installed, run `go run ./cmd/office-agent` on a machine that can ping the printer.
+## Back at the office (this Mac on NexDash Wi-Fi)
 
-## Back at the office
+Printer IP stays `192.168.68.52`. Open https://printer-dashboard.pages.dev/ or http://127.0.0.1:8765/.
 
-Printer IP stays `192.168.68.52` in `.env`. Join the NexDash Wi-Fi. On this Mac open http://127.0.0.1:8765/. Other people on that Wi-Fi use `http://<this-mac-lan-ip>:8765/`.
-
-`./deploy/install-launchd.sh` starts the dashboard at login and restarts it if it dies. No extra setup when you walk in.
-
-The ESP32 is not part of this path. It cannot see the Xerox unless it is left on the office Wi-Fi, and it cannot carry a full scan PDF.
-
-## Production workaround
-
-The Xerox is on the office LAN (`192.168.68.52`). ECS, Netlify, and Vercel cannot scan it. The process that talks eSCL has to sit on a machine that can ping that printer.
-
-What works:
-
-1. Leave this Mac (or a Mac Mini / Pi) on the NexDash Wi-Fi, plugged in, not sleeping.
-2. Keep the dashboard running: `python3 xerox_scan.py dash` or `./deploy/install-launchd.sh` so it comes back after login.
-3. Same building: `http://192.168.68.60:8765/` (IP changes if DHCP moves).
-4. Outside the building: a tunnel from that machine, not a cloud frontend.
-   - Temporary: `ngrok http 8765`
-   - Lasting: Cloudflare Tunnel or Tailscale Funnel to a hostname you own, pointed at `localhost:8765`.
-
-Set `DASH_USER` and `DASH_PASSWORD` in `.env` before you share a public URL. Without those, anyone with the link can scan and send mail as the Workspace sender. There is no other login.
-
-Do not put `.env` on a public host. SMTP lives only on the office box.
+`./deploy/install-launchd.sh` starts the local Python dash at login. That path is optional once the ESP8266 is left at the office.

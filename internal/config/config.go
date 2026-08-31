@@ -31,7 +31,7 @@ type Config struct {
 func Load() Config {
 	loadDotEnv()
 	home, _ := os.UserHomeDir()
-	path := filepath.Join(home, ".config", "xerox-scan", "config.json")
+	path := env("CONFIG_PATH", filepath.Join(home, ".config", "xerox-scan", "config.json"))
 	emails := []string{}
 	if raw, err := os.ReadFile(path); err == nil {
 		var parsed struct {
@@ -46,10 +46,17 @@ func Load() Config {
 	if port == 0 {
 		port = 587
 	}
+	listen := env("API_LISTEN", ":8780")
+	if p := env("PORT", ""); p != "" {
+		if !strings.HasPrefix(p, ":") {
+			p = ":" + p
+		}
+		listen = p
+	}
 	cfg := Config{
 		PrinterHost: env("PRINTER_HOST", "192.168.68.52"),
 		ScanDir:     env("SCAN_DIR", filepath.Join(home, "Documents", "Xerox-scans")),
-		Listen:      env("API_LISTEN", ":8780"),
+		Listen:      listen,
 		BridgeToken: env("BRIDGE_TOKEN", ""),
 		SMTP: SMTP{
 			Host:      env("SMTP_HOST", "smtp.gmail.com"),

@@ -1,0 +1,31 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "printer-api",
+  "main": "index.ts",
+  "compatibility_date": "2026-08-31",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "vars": {
+    "SMTP_HOST": "smtp.gmail.com",
+    "SMTP_PORT": "587",
+    "PRINTER_HOST": "192.168.68.52",
+    "CORS_ORIGINS": "https://printer-dashboard.pages.dev"
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PRINTER_API",
+        "class_name": "PrinterApi"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["PrinterApi"]
+    }
+  ]
+}

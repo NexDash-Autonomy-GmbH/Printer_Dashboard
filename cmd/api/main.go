@@ -46,6 +46,11 @@ func main() {
 
 func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
 	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/api/emails", s.handleEmails)
 	mux.HandleFunc("/api/scan", s.handleScan)
@@ -150,11 +155,26 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	s.cfg = config.Load()
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	var body struct {
-		Source string `json:"source"`
+		Source string   `json:"source"`
+		Emails []string `json:"emails"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Source == "" {
 		body.Source = "platen"
+	}
+	recipients := s.cfg.Emails
+	if len(body.Emails) > 0 {
+		recipients = nil
+		seen := map[string]bool{}
+		from := s.cfg.SMTP.FromEmail
+		for _, e := range body.Emails {
+			e = strings.ToLower(strings.TrimSpace(e))
+			if e == "" || e == from || seen[e] {
+				continue
+			}
+			seen[e] = true
+			recipients = append(recipients, e)
+		}
 	}
 	scanner, adf := escl.Status(s.cfg.PrinterHost)
 	var pages []escl.Page
@@ -209,14 +229,14 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, fail("scan_failed", err.Error()))
 		return
 	}
-	if len(s.cfg.Emails) == 0 {
+	if len(recipients) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": true, "stage": "saved", "scanned": true, "emailed": false,
 			"files": []string{path}, "log": []string{"saved " + path},
 		})
 		return
 	}
-	err = mail.Send(s.cfg.SMTP, s.cfg.Emails, "Xerox scan "+name, "Scan from the Xerox B305.\n", pdf, name)
+	err = mail.Send(s.cfg.SMTP, recipients, "Xerox scan "+name, "Scan from the Xerox B305.\n", pdf, name)
 	if err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"ok": false, "stage": "mail_failed", "scanned": true, "emailed": false,
@@ -226,7 +246,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "stage": "sent", "scanned": true, "emailed": true,
-		"files": []string{path}, "recipients": s.cfg.Emails,
+		"files": []string{path}, "recipients": recipients,
 	})
 }
 

@@ -30,6 +30,19 @@ func testServer(t *testing.T, printerURL string) *httptest.Server {
 	return httptest.NewServer(s.routes())
 }
 
+func TestHealth(t *testing.T) {
+	api := testServer(t, "http://127.0.0.1:1")
+	defer api.Close()
+	res, err := http.Get(api.URL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
 func TestStateUnreachablePrinter(t *testing.T) {
 	api := testServer(t, "http://127.0.0.1:1")
 	defer api.Close()

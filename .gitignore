@@ -1,5 +1,6 @@
 # secrets
 .env
+.railway/
 .env.local
 esp32/wifi.go
 esp8266/bridge/secrets.h
