@@ -50,7 +50,7 @@ func Load() Config {
 		PrinterHost: env("PRINTER_HOST", "192.168.68.52"),
 		ScanDir:     env("SCAN_DIR", filepath.Join(home, "Documents", "Xerox-scans")),
 		Listen:      env("API_LISTEN", ":8780"),
-		BridgeToken: env("BRIDGE_TOKEN", "nexdash-printer"),
+		BridgeToken: env("BRIDGE_TOKEN", ""),
 		SMTP: SMTP{
 			Host:      env("SMTP_HOST", "smtp.gmail.com"),
 			Port:      port,

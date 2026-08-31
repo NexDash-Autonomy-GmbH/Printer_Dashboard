@@ -64,7 +64,7 @@ func TestScanFailsWithoutPrinterOrBridge(t *testing.T) {
 		t.Fatalf("%v", body)
 	}
 	errMsg, _ := body["error"].(string)
-	if !strings.Contains(errMsg, "ESP32") {
+	if !strings.Contains(errMsg, "bridge") {
 		t.Fatalf("error=%q", errMsg)
 	}
 }
@@ -82,6 +82,61 @@ func TestRejectSenderAsRecipient(t *testing.T) {
 	}
 }
 
+func TestBridgeRejectsQueryToken(t *testing.T) {
+	api := testServer(t, "http://127.0.0.1:1")
+	defer api.Close()
+	res, err := http.Get(api.URL + "/bridge/poll?token=test-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestBridgeRejectsWrongBearer(t *testing.T) {
+	api := testServer(t, "http://127.0.0.1:1")
+	defer api.Close()
+	req, _ := http.NewRequest(http.MethodGet, api.URL+"/bridge/poll", nil)
+	req.Header.Set("Authorization", "Bearer wrong")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestCORSAllowsPagesAndBlocksOthers(t *testing.T) {
+	api := testServer(t, "http://127.0.0.1:1")
+	defer api.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, api.URL+"/api/state", nil)
+	req.Header.Set("Origin", "https://printer-dashboard.pages.dev")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.Header.Get("Access-Control-Allow-Origin") != "https://printer-dashboard.pages.dev" {
+		t.Fatalf("allow origin %q", res.Header.Get("Access-Control-Allow-Origin"))
+	}
+
+	bad, _ := http.NewRequest(http.MethodGet, api.URL+"/api/state", nil)
+	bad.Header.Set("Origin", "https://evil.example")
+	res, err = http.DefaultClient.Do(bad)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if got := res.Header.Get("Access-Control-Allow-Origin"); got != "" {
+		t.Fatalf("unexpected allow origin %q", got)
+	}
+}
+
 func TestBridgeScanSavesPDF(t *testing.T) {
 	api := testServer(t, "http://127.0.0.1:1")
 	defer api.Close()
@@ -89,9 +144,11 @@ func TestBridgeScanSavesPDF(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		deadline := time.Now().Add(5 * time.Second)
+		deadline := time.Now().Add(8 * time.Second)
 		for time.Now().Before(deadline) {
-			resp, err := http.Get(api.URL + "/bridge/poll?token=test-token")
+			req, _ := http.NewRequest(http.MethodGet, api.URL+"/bridge/poll", nil)
+			req.Header.Set("Authorization", "Bearer test-token")
+			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				return
 			}
@@ -105,15 +162,35 @@ func TestBridgeScanSavesPDF(t *testing.T) {
 				continue
 			}
 			pdf := []byte("%PDF-1.4 test")
-			req, _ := http.NewRequest(http.MethodPost, api.URL+"/bridge/result?token=test-token&job="+poll.Job, bytes.NewReader(pdf))
-			req.Header.Set("Content-Type", "application/pdf")
-			r, err := http.DefaultClient.Do(req)
+			put, _ := http.NewRequest(http.MethodPost, api.URL+"/bridge/result?job="+poll.Job, bytes.NewReader(pdf))
+			put.Header.Set("Authorization", "Bearer test-token")
+			put.Header.Set("Content-Type", "application/pdf")
+			r, err := http.DefaultClient.Do(put)
 			if err == nil {
 				r.Body.Close()
 			}
 			return
 		}
 	}()
+
+	deadline := time.Now().Add(2 * time.Second)
+	online := false
+	for time.Now().Before(deadline) {
+		res, err := http.Get(api.URL + "/api/state")
+		if err == nil {
+			var st map[string]any
+			_ = json.NewDecoder(res.Body).Decode(&st)
+			res.Body.Close()
+			if st["bridge_online"] == true {
+				online = true
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if !online {
+		t.Fatal("bridge never came online")
+	}
 
 	res, err := http.Post(api.URL+"/api/scan", "application/json", strings.NewReader(`{"source":"platen"}`))
 	if err != nil {

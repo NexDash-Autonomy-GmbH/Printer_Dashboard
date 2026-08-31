@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, use, useCallback, useEffect, useMemo, useState } from "react"
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -102,11 +102,17 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }
   }, [])
 
+  const scanningRef = useRef(false)
+  scanningRef.current = state.jobStatus === "scanning"
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void refresh()
     }, 0)
     const id = window.setInterval(() => {
+      if (scanningRef.current) {
+        return
+      }
       void refresh()
     }, 3000)
     return () => {

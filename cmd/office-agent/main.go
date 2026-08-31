@@ -2,11 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"time"
 
@@ -15,7 +17,15 @@ import (
 )
 
 // Run this on a machine that can reach the Xerox (office LAN).
-// It is the Go stand-in for the ESP32: poll the API, scan, POST the PDF back.
+// It is the Go stand-in for the ESP8266: poll the API, scan, POST the PDF back.
+
+var httpc = &http.Client{
+	Transport: &http.Transport{
+		MaxIdleConns:        8,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     30 * time.Second,
+	},
+}
 
 func main() {
 	cfg := config.Load()
@@ -56,16 +66,21 @@ func main() {
 }
 
 func poll(api, token string) (job, source, printer string, err error) {
-	req, err := http.NewRequest(http.MethodGet, api+"/bridge/poll", nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, api+"/bridge/poll", nil)
 	if err != nil {
 		return "", "", "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpc.Do(req)
 	if err != nil {
 		return "", "", "", err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", "", "", fmt.Errorf("poll HTTP %d", resp.StatusCode)
+	}
 	var out struct {
 		Job     string `json:"job"`
 		Source  string `json:"source"`
@@ -76,18 +91,22 @@ func poll(api, token string) (job, source, printer string, err error) {
 }
 
 func post(api, token, job, errMsg string, pdf []byte) {
-	u := fmt.Sprintf("%s/bridge/result?job=%s", api, job)
+	ctx, cancel := context.WithTimeout(context.Background(), 180*time.Second)
+	defer cancel()
+	q := url.Values{}
+	q.Set("job", job)
 	if errMsg != "" {
-		u += "&error=" + errMsg
+		q.Set("error", errMsg)
 	}
-	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(pdf))
+	u := api + "/bridge/result?" + q.Encode()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(pdf))
 	if err != nil {
 		log.Println("result", err)
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/pdf")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpc.Do(req)
 	if err != nil {
 		log.Println("result", err)
 		return

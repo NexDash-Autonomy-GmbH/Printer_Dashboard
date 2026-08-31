@@ -127,6 +127,7 @@ func Scan(printerHost, inputSource string) ([]Page, error) {
 	if strings.HasPrefix(loc, "/") {
 		loc = base + loc
 	}
+	defer closeJob(loc)
 	docURL := strings.TrimRight(loc, "/") + "/NextDocument"
 	var pages []Page
 	for i := 0; i < MaxPages; i++ {
@@ -148,11 +149,26 @@ func Scan(printerHost, inputSource string) ([]Page, error) {
 		}
 		pages = append(pages, Page{Type: ctype, Data: data})
 	}
-	_, _ = http.NewRequest(http.MethodDelete, loc, nil)
 	if len(pages) == 0 {
 		return nil, fmt.Errorf("scanner returned no pages")
 	}
 	return pages, nil
+}
+
+func closeJob(loc string) {
+	if loc == "" {
+		return
+	}
+	req, err := http.NewRequest(http.MethodDelete, loc, nil)
+	if err != nil {
+		return
+	}
+	resp, err := (&http.Client{Timeout: 8 * time.Second, Transport: client.Transport}).Do(req)
+	if err != nil {
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
 }
 
 func WritePDF(pages []Page) ([]byte, error) {

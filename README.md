@@ -90,9 +90,9 @@ We compared WebSocket, SSE, and HTTPS long-poll for this stack (ESP8266EX, BearS
 | ESP8266 → API | **HTTPS long-poll + POST** | Job notify is rare (one scan at a time). The PDF is **device → server**; SSE cannot carry that. WebSocket + TLS on this chip is a RAM risk (firmware already uses ~91% IRAM). Long-poll is ordinary HTTP, survives proxies, and we tested it. |
 | Browser → API | **REST + SSE for status** | The UI only needs server→browser updates (scanning / sent / failed). SSE is HTTP, auto-reconnects, and is the right default when traffic is one-way. WebSocket would add a duplex channel we do not use. |
 
-Speed: a scan takes seconds to minutes on the Xerox. A 20s poll interval is small next to that. PDF upload is the same HTTPS POST either way.
+Speed: a scan takes seconds to minutes on the Xerox. Job pickup is a long-poll that wakes as soon as someone hits Scan, not a 20s sleep. The UI stops poking ScannerStatus while a scan is running. Printer HTTP connections are reused.
 
-Security: HTTPS only. Bridge token on the device. Do not put the token in query strings on a public URL if you can send `Authorization` instead. Pages.dev cannot talk to `192.168.68.52` directly (browser Private Network Access).
+Security: HTTPS for the public API. The bridge token is only accepted as `Authorization: Bearer …`, never as `?token=` on the URL (that leaks in logs and Referer). CORS is an allowlist (`printer-dashboard.pages.dev`, localhost, plus `CORS_ORIGINS`). Uploaded PDFs are capped at 20 MB. Pages.dev cannot talk to `192.168.68.52` directly (browser Private Network Access).
 
 Tests: `go test ./internal/realtime ./internal/bridge ./cmd/api`.
 
@@ -110,7 +110,7 @@ ESP32 → Go API (outbound HTTPS)
 go run ./cmd/api          # API on :8780, also serves dist/
 ```
 
-Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI.
+Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI. Set `BRIDGE_TOKEN` to a long random string and put the same value in `esp8266/bridge/secrets.h`. Leave `CORS_ORIGINS` empty unless the UI is on another host.
 
 ### Cloudflare Pages (free)
 

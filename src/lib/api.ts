@@ -29,20 +29,37 @@ function url(path: string): string {
   return `${API_BASE}${path}`
 }
 
+async function request(path: string, init: RequestInit = {}, ms = 8000): Promise<Response> {
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), ms)
+  try {
+    return await fetch(url(path), { ...init, signal: ctrl.signal })
+  } finally {
+    window.clearTimeout(timer)
+  }
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
 export async function fetchState(): Promise<PrinterState> {
-  const res = await fetch(url("/api/state"))
-  if (!res.ok) {
-    throw new Error(`Could not load printer state (${res.status})`)
+  try {
+    const res = await request("/api/state", {}, 4000)
+    if (!res.ok) {
+      throw new Error(`Could not load printer state (${res.status})`)
+    }
+    return readJson<PrinterState>(res)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Printer did not respond")
+    }
+    throw error
   }
-  return readJson<PrinterState>(res)
 }
 
 export async function addEmail(email: string): Promise<string[]> {
-  const res = await fetch(url("/api/emails"), {
+  const res = await request("/api/emails", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -57,7 +74,7 @@ export async function addEmail(email: string): Promise<string[]> {
 }
 
 export async function removeEmail(email: string): Promise<string[]> {
-  const res = await fetch(url(`/api/emails?email=${encodeURIComponent(email)}`), {
+  const res = await request(`/api/emails?email=${encodeURIComponent(email)}`, {
     method: "DELETE",
   })
   const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
@@ -70,22 +87,21 @@ export async function removeEmail(email: string): Promise<string[]> {
 }
 
 export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanResult> {
-  const ctrl = new AbortController()
-  const timer = window.setTimeout(() => ctrl.abort(), 180_000)
   try {
-    const res = await fetch(url("/api/scan"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source }),
-      signal: ctrl.signal,
-    })
+    const res = await request(
+      "/api/scan",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ source }),
+      },
+      180_000
+    )
     return await readJson<ScanResult>(res)
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
       return { ok: false, stage: "scan_failed", error: "Scan timed out" }
     }
     throw error
-  } finally {
-    window.clearTimeout(timer)
   }
 }

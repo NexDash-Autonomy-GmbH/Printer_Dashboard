@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"printer-dashboard/internal/bridge"
@@ -18,8 +19,13 @@ import (
 )
 
 type server struct {
-	cfg config.Config
-	hub *bridge.Hub
+	cfg         config.Config
+	hub         *bridge.Hub
+	statMu      sync.Mutex
+	statAt      time.Time
+	statHost    string
+	statScanner string
+	statAdf     string
 }
 
 func main() {
@@ -29,7 +35,13 @@ func main() {
 	}
 	s := &server{cfg: cfg, hub: bridge.New()}
 	log.Printf("api %s  printer %s  sender %s", cfg.Listen, cfg.PrinterHost, cfg.SMTP.FromEmail)
-	log.Fatal(http.ListenAndServe(cfg.Listen, s.routes()))
+	srv := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           s.routes(),
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       75 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }
 
 func (s *server) routes() http.Handler {
@@ -43,9 +55,27 @@ func (s *server) routes() http.Handler {
 	return withCORS(mux)
 }
 
+func (s *server) scannerStatus() (scanner, adf string) {
+	s.cfg = config.Load()
+	s.statMu.Lock()
+	if s.cfg.PrinterHost == s.statHost && time.Since(s.statAt) < 1500*time.Millisecond {
+		scanner, adf = s.statScanner, s.statAdf
+		s.statMu.Unlock()
+		return
+	}
+	s.statMu.Unlock()
+	scanner, adf = escl.Status(s.cfg.PrinterHost)
+	s.statMu.Lock()
+	s.statHost = s.cfg.PrinterHost
+	s.statAt = time.Now()
+	s.statScanner, s.statAdf = scanner, adf
+	s.statMu.Unlock()
+	return
+}
+
 func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 	s.cfg = config.Load()
-	scanner, adf := escl.Status(s.cfg.PrinterHost)
+	scanner, adf := s.scannerStatus()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"printer_host":     s.cfg.PrinterHost,
 		"model":            "Xerox B305 MFP",
@@ -66,6 +96,7 @@ func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
 	s.cfg = config.Load()
 	switch r.Method {
 	case http.MethodPost:
+		r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 		var body struct {
 			Email string `json:"email"`
 		}
@@ -117,6 +148,7 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.cfg = config.Load()
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
 	var body struct {
 		Source string `json:"source"`
 	}
@@ -150,11 +182,12 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 				pages = append(pages, escl.Page{Type: "application/pdf", Data: p})
 			}
 		case <-time.After(3 * time.Minute):
-			writeJSON(w, http.StatusOK, fail("scan_failed", "ESP32 did not return a scan"))
+			s.hub.Cancel(job.ID, errString("office bridge did not return a scan"))
+			writeJSON(w, http.StatusOK, fail("scan_failed", "office bridge did not return a scan"))
 			return
 		}
 	} else {
-		writeJSON(w, http.StatusOK, fail("scan_failed", "printer unreachable and ESP32 is not connected"))
+		writeJSON(w, http.StatusOK, fail("scan_failed", "printer unreachable and the office bridge is not connected"))
 		return
 	}
 	if err != nil {
@@ -198,12 +231,9 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) authorized(r *http.Request) bool {
-	got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	got = strings.TrimSpace(got)
-	if got == "" {
-		got = r.URL.Query().Get("token")
-	}
-	if s.cfg.BridgeToken == "" || got == "" {
+	header := r.Header.Get("Authorization")
+	got := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
+	if s.cfg.BridgeToken == "" || got == "" || !strings.HasPrefix(header, "Bearer ") {
 		return false
 	}
 	return hmac.Equal([]byte(got), []byte(s.cfg.BridgeToken))
@@ -214,20 +244,16 @@ func (s *server) handlePoll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	s.hub.Touch()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
-		if job := s.hub.Take(); job != nil {
-			writeJSON(w, http.StatusOK, map[string]any{
-				"job":     job.ID,
-				"source":  job.Source,
-				"printer": s.cfg.PrinterHost,
-			})
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
+	job := s.hub.Wait(20 * time.Second)
+	if job == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"job": ""})
+		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"job": ""})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"job":     job.ID,
+		"source":  job.Source,
+		"printer": s.cfg.PrinterHost,
+	})
 }
 
 func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
@@ -237,6 +263,7 @@ func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 	}
 	id := r.URL.Query().Get("job")
 	errMsg := r.URL.Query().Get("error")
+	r.Body = http.MaxBytesReader(w, r.Body, 20<<20)
 	data, _ := io.ReadAll(r.Body)
 	res := bridge.Result{}
 	if errMsg != "" {
@@ -263,16 +290,50 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func withCORS(next http.Handler) http.Handler {
+	allowed := corsList()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		origin := r.Header.Get("Origin")
+		if originAllowed(origin, allowed) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		}
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Frame-Options", "DENY")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func corsList() []string {
+	out := []string{"https://printer-dashboard.pages.dev"}
+	for _, part := range strings.Split(os.Getenv("CORS_ORIGINS"), ",") {
+		p := strings.TrimSpace(strings.TrimRight(part, "/"))
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func originAllowed(origin string, allowed []string) bool {
+	if origin == "" {
+		return false
+	}
+	if strings.HasPrefix(origin, "http://127.0.0.1:") || strings.HasPrefix(origin, "http://localhost:") {
+		return true
+	}
+	for _, a := range allowed {
+		if origin == a {
+			return true
+		}
+	}
+	return false
 }
 
 func spa(root string) http.Handler {

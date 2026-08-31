@@ -1,18 +1,29 @@
 // ESP8266EX firmware (this board is not an ESP32).
 // Joins office Wi-Fi, long-polls the Go API, scans the Xerox over eSCL.
+// PDFs are written to LittleFS in 512-byte chunks. A String cannot hold a scan.
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecureBearSSL.h>
+#include <LittleFS.h>
 #include "secrets.h"
+
+static const char *SCAN_PATH = "/scan.pdf";
+static const int MAX_PDF_BYTES = 1500000;
 
 void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println();
   Serial.println("nexdash-bridge boot");
+  if (!LittleFS.begin()) {
+    LittleFS.format();
+    LittleFS.begin();
+  }
   WiFi.mode(WIFI_STA);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+  WiFi.setAutoReconnect(true);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Serial.print("wifi ");
   Serial.println(WIFI_SSID);
@@ -50,52 +61,215 @@ String jsonField(String body, const char *key) {
 
 bool isHttps(String url) { return url.startsWith("https://"); }
 
-int httpGet(String url, String &out) {
+void addAuth(HTTPClient &http) {
+  http.addHeader("Authorization", String("Bearer ") + BRIDGE_TOKEN);
+}
+
+int httpGetSmall(String url, String &out, bool auth) {
+  HTTPClient http;
+  int code = -1;
+  out = "";
+  http.setTimeout(25000);
+  http.setReuse(true);
   if (isHttps(url)) {
     BearSSL::WiFiClientSecure client;
     client.setInsecure();
-    HTTPClient http;
-    http.setTimeout(25000);
-    http.begin(client, url);
-    http.addHeader("Authorization", String("Bearer ") + BRIDGE_TOKEN);
-    int code = http.GET();
-    out = http.getString();
+    if (!http.begin(client, url)) {
+      return -1;
+    }
+    if (auth) {
+      addAuth(http);
+    }
+    code = http.GET();
+    if (code > 0) {
+      out = http.getString();
+    }
     http.end();
     return code;
   }
   WiFiClient client;
-  HTTPClient http;
-  http.setTimeout(25000);
-  http.begin(client, url);
-  int code = http.GET();
-  out = http.getString();
+  if (!http.begin(client, url)) {
+    return -1;
+  }
+  if (auth) {
+    addAuth(http);
+  }
+  code = http.GET();
+  if (code > 0) {
+    out = http.getString();
+  }
   http.end();
   return code;
 }
 
-int httpPost(String url, const char *ctype, uint8_t *data, size_t len, String &out) {
+int httpPostBytes(String url, const char *ctype, uint8_t *data, size_t len, String &out, bool auth) {
+  HTTPClient http;
+  int code = -1;
+  out = "";
+  http.setTimeout(180000);
+  http.setReuse(true);
   if (isHttps(url)) {
     BearSSL::WiFiClientSecure client;
     client.setInsecure();
-    HTTPClient http;
-    http.setTimeout(180000);
-    http.begin(client, url);
-    http.addHeader("Authorization", String("Bearer ") + BRIDGE_TOKEN);
+    if (!http.begin(client, url)) {
+      return -1;
+    }
+    if (auth) {
+      addAuth(http);
+    }
     http.addHeader("Content-Type", ctype);
-    int code = http.POST(data, len);
-    out = http.getString();
+    code = http.POST(data, len);
+    if (code > 0) {
+      out = http.getString();
+    }
     http.end();
     return code;
   }
   WiFiClient client;
-  HTTPClient http;
-  http.setTimeout(180000);
-  http.begin(client, url);
+  if (!http.begin(client, url)) {
+    return -1;
+  }
+  if (auth) {
+    addAuth(http);
+  }
   http.addHeader("Content-Type", ctype);
-  int code = http.POST(data, len);
-  out = http.getString();
+  code = http.POST(data, len);
+  if (code > 0) {
+    out = http.getString();
+  }
   http.end();
   return code;
+}
+
+bool collectLocation(HTTPClient &http, String printerBase, String &loc) {
+  loc = http.header("Location");
+  if (loc.length() == 0) {
+    return false;
+  }
+  if (loc.startsWith("/")) {
+    loc = printerBase + loc;
+  }
+  return true;
+}
+
+int startScanJob(String printerBase, const char *xml, String &loc) {
+  loc = "";
+  HTTPClient http;
+  http.setTimeout(30000);
+  WiFiClient client;
+  if (!http.begin(client, printerBase + "/eSCL/ScanJobs")) {
+    return -1;
+  }
+  const char *keys[] = {"Location"};
+  http.collectHeaders(keys, 1);
+  http.addHeader("Content-Type", "text/xml");
+  int code = http.POST((uint8_t *)xml, strlen(xml));
+  if (code == 200 || code == 201) {
+    collectLocation(http, printerBase, loc);
+  }
+  http.end();
+  return code;
+}
+
+bool downloadToFile(String url, const char *path) {
+  LittleFS.remove(path);
+  HTTPClient http;
+  http.setTimeout(180000);
+  WiFiClient client;
+  if (!http.begin(client, url)) {
+    return false;
+  }
+  int code = http.GET();
+  if (code != 200) {
+    http.end();
+    return false;
+  }
+  File f = LittleFS.open(path, "w");
+  if (!f) {
+    http.end();
+    return false;
+  }
+  WiFiClient *stream = http.getStreamPtr();
+  uint8_t buf[512];
+  int written = 0;
+  uint32_t idleSince = millis();
+  while (http.connected() && written < MAX_PDF_BYTES) {
+    size_t avail = stream->available();
+    if (avail) {
+      size_t chunk = avail;
+      if (chunk > sizeof(buf)) {
+        chunk = sizeof(buf);
+      }
+      int n = stream->readBytes(buf, chunk);
+      if (n <= 0) {
+        break;
+      }
+      if (f.write(buf, n) != (size_t)n) {
+        f.close();
+        http.end();
+        return false;
+      }
+      written += n;
+      idleSince = millis();
+    } else {
+      if (millis() - idleSince > 8000) {
+        break;
+      }
+      delay(1);
+    }
+    yield();
+  }
+  f.close();
+  http.end();
+  return written > 4;
+}
+
+int httpPostFile(String url, const char *ctype, const char *path, String &out) {
+  File f = LittleFS.open(path, "r");
+  if (!f) {
+    return -1;
+  }
+  size_t len = f.size();
+  HTTPClient http;
+  int code = -1;
+  out = "";
+  http.setTimeout(180000);
+  if (isHttps(url)) {
+    BearSSL::WiFiClientSecure client;
+    client.setInsecure();
+    if (!http.begin(client, url)) {
+      f.close();
+      return -1;
+    }
+    addAuth(http);
+    http.addHeader("Content-Type", ctype);
+    code = http.sendRequest("POST", &f, len);
+    if (code > 0) {
+      out = http.getString();
+    }
+    http.end();
+    f.close();
+    return code;
+  }
+  WiFiClient client;
+  if (!http.begin(client, url)) {
+    f.close();
+    return -1;
+  }
+  addAuth(http);
+  http.addHeader("Content-Type", ctype);
+  code = http.sendRequest("POST", &f, len);
+  if (code > 0) {
+    out = http.getString();
+  }
+  http.end();
+  f.close();
+  return code;
+}
+
+void postError(String resultUrl, const char *encoded) {
+  String unused;
+  httpPostBytes(resultUrl + "&error=" + encoded, "text/plain", NULL, 0, unused, true);
 }
 
 void loop() {
@@ -108,7 +282,7 @@ void loop() {
 
   String pollUrl = String(API_BASE) + "/bridge/poll";
   String body;
-  int code = httpGet(pollUrl, body);
+  int code = httpGetSmall(pollUrl, body, true);
   if (code != 200) {
     Serial.printf("poll %d\n", code);
     delay(2000);
@@ -141,23 +315,38 @@ void loop() {
     "</scan:ScanSettings>";
 
   String printerBase = "http://" + printer;
-  String unused;
-  int pcode = httpPost(printerBase + "/eSCL/ScanJobs", "text/xml",
-                       (uint8_t *)xml.c_str(), xml.length(), unused);
+  String loc;
+  int pcode = startScanJob(printerBase, xml.c_str(), loc);
   String resultUrl = String(API_BASE) + "/bridge/result?job=" + job;
-  if (pcode != 201 && pcode != 200) {
-    String err = "scan rejected";
-    httpPost(resultUrl + "&error=" + err, "text/plain", NULL, 0, unused);
+  if ((pcode != 201 && pcode != 200) || loc.length() == 0) {
+    postError(resultUrl, "scan%20rejected");
     return;
   }
 
-  String pdf;
-  int dcode = httpGet(printerBase + "/eSCL/ScanJobs/NextDocument", pdf);
-  // Location-based NextDocument is printer-specific; try common path first.
-  if (dcode != 200 || pdf.length() < 4) {
-    httpPost(resultUrl + "&error=no%20document", "text/plain", NULL, 0, unused);
+  String docUrl = loc;
+  if (docUrl.endsWith("/")) {
+    docUrl.remove(docUrl.length() - 1);
+  }
+  docUrl += "/NextDocument";
+  if (!downloadToFile(docUrl, SCAN_PATH)) {
+    HTTPClient del;
+    WiFiClient delClient;
+    if (del.begin(delClient, loc)) {
+      del.sendRequest("DELETE");
+      del.end();
+    }
+    postError(resultUrl, "no%20document");
     return;
   }
-  httpPost(resultUrl, "application/pdf", (uint8_t *)pdf.c_str(), pdf.length(), unused);
+
+  String unused;
+  httpPostFile(resultUrl, "application/pdf", SCAN_PATH, unused);
+  HTTPClient del;
+  WiFiClient delClient;
+  if (del.begin(delClient, loc)) {
+    del.sendRequest("DELETE");
+    del.end();
+  }
+  LittleFS.remove(SCAN_PATH);
   Serial.println("posted pdf");
 }

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hmac
+import http.client
 import io
 import json
 import os
@@ -14,9 +15,12 @@ import smtplib
 import socket
 import subprocess
 import sys
+import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from urllib.parse import urlsplit
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -160,6 +164,7 @@ def printer_base(cfg: dict[str, Any]) -> str:
 
 
 _opener = urllib.request.build_opener()
+_tls = threading.local()
 
 
 def http(
@@ -170,16 +175,65 @@ def http(
     headers: dict[str, str] | None = None,
     timeout: int = 30,
 ) -> tuple[int, dict[str, str], bytes]:
-    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
-    try:
-        with _opener.open(req, timeout=timeout) as resp:
+    method = method or ("POST" if data is not None else "GET")
+    parts = urlsplit(url)
+    if parts.scheme != "http" or not parts.hostname:
+        req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+        try:
+            with _opener.open(req, timeout=timeout) as resp:
+                hdrs = {k.lower(): v for k, v in resp.headers.items()}
+                return resp.status, hdrs, resp.read()
+        except urllib.error.HTTPError as err:
+            hdrs = {k.lower(): v for k, v in err.headers.items()} if err.headers else {}
+            return err.code, hdrs, err.read() or b""
+        except (urllib.error.URLError, TimeoutError, OSError):
+            return 0, {}, b""
+
+    path = parts.path or "/"
+    if parts.query:
+        path = f"{path}?{parts.query}"
+    port = parts.port or 80
+    hdrs_in = {"Connection": "keep-alive", "Host": parts.hostname}
+    if headers:
+        hdrs_in.update(headers)
+    attempts = 2 if method in ("GET", "DELETE") else 1
+    for attempt in range(attempts):
+        conn: http.client.HTTPConnection | None = getattr(_tls, "conn", None)
+        reused = (
+            conn is not None
+            and conn.host == parts.hostname
+            and (conn.port or 80) == port
+            and conn.sock is not None
+        )
+        try:
+            if not reused:
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                conn = http.client.HTTPConnection(parts.hostname, port, timeout=timeout)
+                _tls.conn = conn
+            else:
+                conn.timeout = timeout
+                if conn.sock is not None:
+                    conn.sock.settimeout(timeout)
+            conn.request(method, path, body=data, headers=hdrs_in)
+            resp = conn.getresponse()
+            body = resp.read()
             hdrs = {k.lower(): v for k, v in resp.headers.items()}
-            return resp.status, hdrs, resp.read()
-    except urllib.error.HTTPError as err:
-        hdrs = {k.lower(): v for k, v in err.headers.items()} if err.headers else {}
-        return err.code, hdrs, err.read() or b""
-    except (urllib.error.URLError, TimeoutError, OSError):
-        return 0, {}, b""
+            return resp.status, hdrs, body
+        except (TimeoutError, OSError, http.client.HTTPException):
+            try:
+                if conn is not None:
+                    conn.close()
+            except Exception:
+                pass
+            _tls.conn = None
+            if reused and attempt + 1 < attempts:
+                continue
+            return 0, {}, b""
+    return 0, {}, b""
 
 
 class BadEmail(ValueError):
@@ -261,19 +315,45 @@ def cmd_remove_email(cfg: dict[str, Any], raw: str) -> int:
     return 0
 
 
-def pick_source(base: str, requested: str) -> str:
-    code, _, body = http(f"{base}/eSCL/ScannerStatus", timeout=8)
-    if code != 200:
-        raise RuntimeError(f"cannot read scanner status (HTTP {code})")
-    root = ET.fromstring(body)
-    adf = root.findtext("scan:AdfState", default="", namespaces=ESCL_NS)
+_status_lock = threading.Lock()
+_status_at = 0.0
+_status_host = ""
+_status_pair = ("unreachable", "unknown")
+
+
+def scanner_status(cfg: dict[str, Any], *, fresh: bool = False) -> tuple[str, str]:
+    global _status_at, _status_host, _status_pair
+    host = str(cfg.get("printer_host") or "")
+    now = time.monotonic()
+    if not fresh:
+        with _status_lock:
+            if host == _status_host and now - _status_at < 1.5:
+                return _status_pair
+    base = printer_base(cfg)
+    code, _, body = http(f"{base}/eSCL/ScannerStatus", timeout=8 if fresh else 2)
+    state, adf = "unreachable", "unknown"
+    if code == 200:
+        root = ET.fromstring(body)
+        state = root.findtext("pwg:State", default="?", namespaces=ESCL_NS) or "?"
+        adf = root.findtext("scan:AdfState", default="?", namespaces=ESCL_NS) or "?"
+    with _status_lock:
+        _status_at = time.monotonic()
+        _status_host = host
+        _status_pair = (state, adf)
+    return state, adf
+
+
+def pick_source(cfg: dict[str, Any], requested: str) -> str:
+    state, adf = scanner_status(cfg, fresh=True)
+    if state == "unreachable":
+        raise RuntimeError("cannot read scanner status")
     if requested == "adf":
-        if adf == "ScannerAdfEmpty":
+        if adf == "ScannerAdfEmpty" or "empty" in adf.lower():
             raise RuntimeError("ADF is empty")
         return "Feeder"
     if requested == "platen":
         return "Platen"
-    if adf and adf != "ScannerAdfEmpty":
+    if adf and adf != "ScannerAdfEmpty" and "empty" not in adf.lower():
         return "Feeder"
     return "Platen"
 
@@ -397,7 +477,7 @@ def run_scan(
 
     try:
         base = printer_base(cfg)
-        chosen = pick_source(base, source)
+        chosen = pick_source(cfg, source)
     except RuntimeError as err:
         return {
             "ok": False,
@@ -521,13 +601,7 @@ def cmd_scan(cfg: dict[str, Any], args: argparse.Namespace) -> int:
 
 def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
     base = printer_base(cfg)
-    code, _, body = http(f"{base}/eSCL/ScannerStatus", timeout=2)
-    state = "unreachable"
-    adf = "unknown"
-    if code == 200:
-        root = ET.fromstring(body)
-        state = root.findtext("pwg:State", default="?", namespaces=ESCL_NS) or "?"
-        adf = root.findtext("scan:AdfState", default="?", namespaces=ESCL_NS) or "?"
+    state, adf = scanner_status(cfg)
     smtp = cfg.get("smtp") or {}
     sender = (smtp.get("from_email") or "").lower()
     return {
@@ -582,6 +656,9 @@ def cmd_dash(cfg: dict[str, Any], port: int, open_browser: bool = True) -> int:
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(raw)))
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Frame-Options", "DENY")
             self._cors()
             self.end_headers()
             self.wfile.write(raw)
@@ -619,6 +696,8 @@ def cmd_dash(cfg: dict[str, Any], port: int, open_browser: bool = True) -> int:
             length = int(self.headers.get("Content-Length") or "0")
             if length <= 0:
                 return {}
+            if length > 8192:
+                return {}
             raw = self.rfile.read(length)
             if not raw:
                 return {}
@@ -651,6 +730,8 @@ def cmd_dash(cfg: dict[str, Any], port: int, open_browser: bool = True) -> int:
             self.send_response(200)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
             self.end_headers()
             self.wfile.write(data)
 
