@@ -1,0 +1,30 @@
+# secrets
+.env
+.env.local
+!.env.example
+!.env_example
+*.pem
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# node
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# scans / local data
+data/recipients.json
+Documents/
+
+# logs / os
+logs/
+*.log
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json

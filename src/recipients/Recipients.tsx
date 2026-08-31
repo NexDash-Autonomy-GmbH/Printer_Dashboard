@@ -1,0 +1,192 @@
+import { useTransition } from "react"
+import { CheckIcon, ScanLineIcon } from "lucide-react"
+import { toast } from "sonner"
+
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import { AnimatedButton } from "@/components/ui/animated-button"
+import { StatusIndicator } from "@/components/ui/status-indicator"
+import { SwitchMode } from "@/components/ui/switch-mode"
+import { Spinner } from "@/components/ui/spinner"
+import { useRecipients } from "@/recipients/context"
+
+function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
+  const value = scanner.toLowerCase()
+  if (value.includes("idle")) return "active"
+  if (value.includes("processing") || value.includes("busy")) return "fixing"
+  if (value.includes("unreachable") || value === "?") return "down"
+  return "idle"
+}
+
+function RecipientsAddForm() {
+  const { state, actions } = useRecipients()
+  const [pending, startTransition] = useTransition()
+
+  return (
+    <form
+      className="flex min-w-0 items-center gap-2"
+      onSubmit={(event) => {
+        event.preventDefault()
+        startTransition(async () => {
+          await actions.add()
+        })
+      }}
+    >
+      <input
+        id="recipient-email"
+        name="email"
+        type="email"
+        inputMode="email"
+        autoComplete="off"
+        spellCheck={false}
+        placeholder="email"
+        aria-label="Email"
+        value={state.draft}
+        aria-invalid={state.invalid}
+        onChange={(event) => actions.setDraft(event.target.value)}
+        className="h-11 min-w-0 flex-1 rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+      />
+      <AnimatedButton type="submit" size="lg" disabled={pending}>
+        {pending ? <Spinner data-icon="inline-start" /> : null}
+        Add
+      </AnimatedButton>
+    </form>
+  )
+}
+
+function RecipientRow({ email }: { email: string }) {
+  const { actions } = useRecipients()
+  const [pending, startTransition] = useTransition()
+
+  return (
+    <li className="flex items-center justify-between gap-3 px-4 py-3">
+      <div className="flex min-w-0 items-center gap-3">
+        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
+          <CheckIcon className="size-3.5" aria-hidden="true" />
+        </span>
+        <span className="truncate text-sm font-medium" translate="no">
+          {email}
+        </span>
+      </div>
+      <AnimatedButton
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={pending}
+        aria-label={`Remove ${email}`}
+        onClick={() => {
+          startTransition(async () => {
+            await actions.remove(email)
+          })
+        }}
+      >
+        {pending ? <Spinner data-icon="inline-start" /> : null}
+        Remove
+      </AnimatedButton>
+    </li>
+  )
+}
+
+function RecipientsList() {
+  const { state } = useRecipients()
+
+  if (!state.loaded) {
+    return null
+  }
+
+  return (
+    <section className="flex flex-col gap-3">
+      <h2 className="text-lg font-semibold tracking-tight">Recipients</h2>
+      {state.emails.length === 0 ? (
+        <p className="text-sm text-muted-foreground">None yet.</p>
+      ) : (
+        <ul className="divide-y divide-border rounded-2xl border border-border">
+          {state.emails.map((email) => (
+            <RecipientRow key={email} email={email} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function RecipientsScan() {
+  const { actions } = useRecipients()
+  const [pending, startTransition] = useTransition()
+
+  return (
+    <AnimatedButton
+      size="lg"
+      disabled={pending}
+      onClick={() => {
+        startTransition(async () => {
+          try {
+            await actions.scan()
+          } catch (error) {
+            toast.error(error instanceof Error ? error.message : "Scan failed")
+          }
+        })
+      }}
+    >
+      {pending ? (
+        <Spinner data-icon="inline-start" />
+      ) : (
+        <ScanLineIcon data-icon="inline-start" aria-hidden="true" />
+      )}
+      {pending ? "Scanning…" : "Scan"}
+    </AnimatedButton>
+  )
+}
+
+export function RecipientsDashboard() {
+  const { state } = useRecipients()
+  const adfEmpty = state.adf.toLowerCase().includes("empty")
+
+  return (
+    <div className="flex min-h-dvh flex-col bg-background">
+      <header className="border-b border-border">
+        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+          <div className="min-w-0">
+            <h1 className="text-xl font-semibold tracking-tight">Xerox B305</h1>
+            <div className="mt-1 flex flex-wrap items-center gap-4">
+              <StatusIndicator
+                size="sm"
+                state={scannerState(state.scanner)}
+                label={state.scanner}
+              />
+              <StatusIndicator
+                size="sm"
+                state={adfEmpty ? "idle" : "active"}
+                label={adfEmpty ? "ADF empty" : "ADF loaded"}
+              />
+            </div>
+          </div>
+          <SwitchMode
+            width={84}
+            height={42}
+            darkColor="#111"
+            lightColor="#F9F9F9"
+            knobDarkColor="#1C1C1C"
+            knobLightColor="#F3F3F7"
+            borderDarkColor="#444"
+            borderLightColor="#DDD"
+          />
+        </div>
+      </header>
+
+      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
+        <div className="flex w-full max-w-xl flex-col gap-5">
+        {state.loadError ? (
+          <Alert>
+            <AlertTitle>Printer unreachable</AlertTitle>
+            <AlertDescription>{state.loadError}</AlertDescription>
+          </Alert>
+        ) : null}
+
+        <RecipientsAddForm />
+        <RecipientsList />
+        <RecipientsScan />
+        </div>
+      </main>
+    </div>
+  )
+}
