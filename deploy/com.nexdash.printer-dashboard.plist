@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.nexdash.printer-dashboard</string>
+  <key>WorkingDirectory</key>
+  <string>/Users/alwinpaul/Desktop/NexDash/Printer_Dashboard</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/alwinpaul/Desktop/NexDash/Printer_Dashboard/xerox_scan.py</string>
+    <string>dash</string>
+    <string>--port</string>
+    <string>8765</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>/Users/alwinpaul/Library/Logs/printer-dashboard.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/alwinpaul/Library/Logs/printer-dashboard.err</string>
+</dict>
+</plist>

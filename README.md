@@ -56,3 +56,20 @@ Recipient list is stored in `~/.config/xerox-scan/config.json`. SMTP settings co
 ## Layout
 
 Vite + React + TypeScript + Tailwind + shadcn. Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally.
+
+## Production workaround
+
+The Xerox is on the office LAN (`192.168.68.52`). ECS, Netlify, and Vercel cannot scan it. The process that talks eSCL has to sit on a machine that can ping that printer.
+
+What works:
+
+1. Leave this Mac (or a Mac Mini / Pi) on the NexDash Wi-Fi, plugged in, not sleeping.
+2. Keep the dashboard running: `python3 xerox_scan.py dash` or `./deploy/install-launchd.sh` so it comes back after login.
+3. Same building: `http://192.168.68.60:8765/` (IP changes if DHCP moves).
+4. Outside the building: a tunnel from that machine, not a cloud frontend.
+   - Temporary: `ngrok http 8765`
+   - Lasting: Cloudflare Tunnel or Tailscale Funnel to a hostname you own, pointed at `localhost:8765`.
+
+Set `DASH_USER` and `DASH_PASSWORD` in `.env` before you share a public URL. Without those, anyone with the link can scan and send mail as the Workspace sender. There is no other login.
+
+Do not put `.env` on a public host. SMTP lives only on the office box.

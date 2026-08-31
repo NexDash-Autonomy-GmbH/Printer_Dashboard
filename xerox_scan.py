@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import hmac
 import io
 import json
 import os
@@ -578,6 +580,30 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
             self.end_headers()
             self.wfile.write(raw)
 
+        def _authorized(self) -> bool:
+            user = env("DASH_USER")
+            password = env("DASH_PASSWORD")
+            if not user or not password:
+                return True
+            header = self.headers.get("Authorization") or ""
+            if not header.startswith("Basic "):
+                return False
+            try:
+                decoded = base64.b64decode(header.split(" ", 1)[1]).decode()
+                got_user, got_pass = decoded.split(":", 1)
+            except Exception:
+                return False
+            return hmac.compare_digest(got_user, user) and hmac.compare_digest(got_pass, password)
+
+        def _challenge(self) -> None:
+            body = b"auth required\n"
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Printer Dashboard"')
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
         def do_OPTIONS(self) -> None:  # noqa: N802
             self.send_response(204)
             self._cors()
@@ -597,6 +623,9 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
             return data if isinstance(data, dict) else {}
 
         def do_GET(self) -> None:  # noqa: N802
+            if not self._authorized():
+                self._challenge()
+                return
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path == "/api/state":
                 self._json(200, printer_state(load_config()))
@@ -620,6 +649,9 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
             self.wfile.write(data)
 
         def do_POST(self) -> None:  # noqa: N802
+            if not self._authorized():
+                self._challenge()
+                return
             parsed = urllib.parse.urlparse(self.path)
             payload = self._body()
             if parsed.path == "/api/emails":
@@ -652,6 +684,9 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
             self.send_error(404)
 
         def do_DELETE(self) -> None:  # noqa: N802
+            if not self._authorized():
+                self._challenge()
+                return
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path != "/api/emails":
                 self.send_error(404)
