@@ -8,6 +8,7 @@
 #include <WiFiClientSecureBearSSL.h>
 #include <LittleFS.h>
 #include "secrets.h"
+#include "snmp.h"
 
 static const char *SCAN_PATH = "/scan.pdf";
 static const int MAX_PDF_BYTES = 1500000;
@@ -272,6 +273,56 @@ void postError(String resultUrl, const char *encoded) {
   httpPostBytes(resultUrl + "&error=" + encoded, "text/plain", NULL, 0, unused, true);
 }
 
+static uint32_t lastTelemetry = 0;
+
+void postTelemetry(const String &printer) {
+  if (millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
+    return;
+  }
+  lastTelemetry = millis();
+  int statusN = snmpInt(printer.c_str(), "1.3.6.1.2.1.25.3.5.1.1.1");
+  int pages = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.10.2.1.4.1.1");
+  int tmax = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.8.1.1");
+  int tcur = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.9.1.1");
+  String tname = snmpStr(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.6.1.1");
+  if (tname.length() == 0) {
+    tname = "Black Toner";
+  }
+  int pct = -1;
+  if (tmax > 0 && tcur >= 0) {
+    pct = (tcur * 100) / tmax;
+    if (pct > 100) {
+      pct = 100;
+    }
+  }
+  const char *status = "Unknown";
+  if (statusN == 3) status = "Idle";
+  else if (statusN == 4) status = "Printing";
+  else if (statusN == 5) status = "Warmup";
+  else if (statusN == 6) status = "Stopped";
+  else if (statusN == 7) status = "Offline";
+  bool online = statusN != -999999;
+  String json = "{";
+  json += "\"online\":";
+  json += online ? "true" : "false";
+  json += ",\"status\":\"";
+  json += status;
+  json += "\",\"pages\":";
+  json += (pages == -999999) ? "null" : String(pages);
+  json += ",\"toners\":[{\"name\":\"";
+  json += tname;
+  json += "\",\"pct\":";
+  json += (pct < 0) ? "null" : String(pct);
+  json += ",\"color\":\"#1e293b\"}],\"trays\":[],\"alerts\":[],\"checked_at\":";
+  json += String((uint32_t)(millis() / 1000));
+  json += "}";
+  String unused;
+  String url = String(API_BASE) + "/bridge/telemetry";
+  httpPostBytes(url.c_str(), "application/json", (uint8_t *)json.c_str(), json.length(), unused, true);
+  Serial.print("telemetry ");
+  Serial.println(online ? status : "offline");
+}
+
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("wifi reconnect");
@@ -290,6 +341,11 @@ void loop() {
   }
   String job = jsonField(body, "job");
   if (job.length() == 0) {
+    String printer = jsonField(body, "printer");
+    if (printer.length() == 0) {
+      printer = "192.168.68.52";
+    }
+    postTelemetry(printer);
     return;
   }
   String source = jsonField(body, "source");

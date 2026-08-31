@@ -26,6 +26,8 @@ type server struct {
 	statHost    string
 	statScanner string
 	statAdf     string
+	supMu       sync.Mutex
+	supplies    any
 }
 
 func main() {
@@ -56,6 +58,7 @@ func (s *server) routes() http.Handler {
 	mux.HandleFunc("/api/scan", s.handleScan)
 	mux.HandleFunc("/bridge/poll", s.handlePoll)
 	mux.HandleFunc("/bridge/result", s.handleResult)
+	mux.HandleFunc("/bridge/telemetry", s.handleTelemetry)
 	mux.Handle("/", spa("."))
 	return withCORS(mux)
 }
@@ -94,7 +97,14 @@ func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
 		"workspace_emails": s.cfg.WorkspaceEmails,
 		"web_ui":           "http://" + s.cfg.PrinterHost + "/",
 		"bridge_online":    s.hub.Online(),
+		"supplies":         s.currentSupplies(),
 	})
+}
+
+func (s *server) currentSupplies() any {
+	s.supMu.Lock()
+	defer s.supMu.Unlock()
+	return s.supplies
 }
 
 func (s *server) handleEmails(w http.ResponseWriter, r *http.Request) {
@@ -292,6 +302,28 @@ func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
 		res.Pages = [][]byte{data}
 	}
 	s.hub.Finish(id, res)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<16)
+	var body map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": "bad json"})
+		return
+	}
+	s.hub.Touch()
+	s.supMu.Lock()
+	s.supplies = body
+	s.supMu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
