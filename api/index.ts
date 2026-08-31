@@ -61,6 +61,9 @@ function allowedOrigin(origin: string, extra: string): boolean {
   if (origin === "https://printer-dashboard.pages.dev") {
     return true;
   }
+  if (/^https:\/\/[a-z0-9]+\.printer-dashboard\.pages\.dev$/.test(origin)) {
+    return true;
+  }
   if (origin.startsWith("http://127.0.0.1:") || origin.startsWith("http://localhost:")) {
     return true;
   }
