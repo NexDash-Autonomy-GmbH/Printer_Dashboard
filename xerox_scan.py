@@ -41,6 +41,8 @@ NEXDASH_MAILS = [
     "franck@nexdash.com",
     "michael@nexdash.com",
     "karsten@nexdash.com",
+    "gabriel@nexdash.com",
+    "berit@nexdash.com",
 ]
 _ses_nexdash: list[str] | None = None
 

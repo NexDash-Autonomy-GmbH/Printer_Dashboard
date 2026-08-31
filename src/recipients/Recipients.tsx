@@ -26,8 +26,8 @@ function RecipientsAddForm() {
   const [pending, startTransition] = useTransition()
   const draft = state.draft.trim().toLowerCase()
   const suggestions = state.workspaceEmails.filter((email) => {
+    if (!draft) return false
     if (state.emails.includes(email)) return false
-    if (!draft) return true
     const local = email.split("@")[0] || ""
     return email.includes(draft) || local.startsWith(draft)
   })
@@ -50,7 +50,7 @@ function RecipientsAddForm() {
           inputMode="email"
           autoComplete="off"
           spellCheck={false}
-          placeholder="parth or parth@nexdash.com"
+          placeholder="name@nexdash.com"
           aria-label="Email"
           list="nexdash-workspace-emails"
           value={state.draft}
@@ -184,24 +184,31 @@ function JobBanner() {
 
 function ScanSourceToggle() {
   const { state, actions } = useRecipients()
+  const feederEmpty = state.adf.toLowerCase().includes("empty")
   return (
-    <div className="flex w-full gap-1 rounded-lg border border-input p-0.5" role="group" aria-label="Scan from">
-      <Toggle
-        variant="outline"
-        className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
-        pressed={state.source !== "adf"}
-        onPressedChange={() => actions.setSource("platen")}
-      >
-        Glass
-      </Toggle>
-      <Toggle
-        variant="outline"
-        className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
-        pressed={state.source === "adf"}
-        onPressedChange={() => actions.setSource("adf")}
-      >
-        Feeder
-      </Toggle>
+    <div className="flex flex-col gap-2">
+      <div className="flex w-full gap-1 rounded-lg border border-input p-0.5" role="group" aria-label="Scan from">
+        <Toggle
+          variant="outline"
+          className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+          pressed={state.source !== "adf"}
+          onPressedChange={() => actions.setSource("platen")}
+        >
+          Glass
+        </Toggle>
+        <Toggle
+          variant="outline"
+          className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+          pressed={state.source === "adf"}
+          disabled={feederEmpty}
+          onPressedChange={() => actions.setSource("adf")}
+        >
+          Feeder
+        </Toggle>
+      </div>
+      {feederEmpty ? (
+        <p className="text-sm text-muted-foreground">Feeder is empty. Load paper to use it.</p>
+      ) : null}
     </div>
   )
 }
@@ -209,6 +216,7 @@ function ScanSourceToggle() {
 function RecipientsScan() {
   const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
+  const feederEmpty = state.source === "adf" && state.adf.toLowerCase().includes("empty")
   const label =
     state.jobStatus === "scanning"
       ? "Scanning…"
@@ -222,7 +230,7 @@ function RecipientsScan() {
     <AnimatedButton
       size="lg"
       className="w-full"
-      disabled={pending || state.jobStatus === "scanning"}
+      disabled={pending || state.jobStatus === "scanning" || feederEmpty}
       onClick={() => {
         startTransition(async () => {
           try {

@@ -88,7 +88,14 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   const refresh = useCallback(async () => {
     try {
       const data = await fetchState()
-      setState((current) => ({ ...current, ...applyPrinter(data) }))
+      setState((current) => {
+        const next = { ...current, ...applyPrinter(data) }
+        const empty = (next.adf || "").toLowerCase().includes("empty")
+        if (empty && current.source === "adf") {
+          next.source = "platen"
+        }
+        return next
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : "Load failed"
       setState((current) => ({ ...current, loadError: message, loaded: true }))
@@ -149,6 +156,15 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   }, [])
 
   const scan = useCallback(async () => {
+    if (state.source === "adf" && state.adf.toLowerCase().includes("empty")) {
+      toast.error("Feeder is empty")
+      setState((current) => ({
+        ...current,
+        jobStatus: "failed",
+        jobMessage: "Feeder is empty. Load paper or use Glass.",
+      }))
+      return
+    }
     setState((current) => ({
       ...current,
       jobStatus: "scanning",
@@ -190,7 +206,15 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         setState((current) => ({ ...current, draft: value, invalid: false })),
       add,
       remove,
-      setSource: (source) => setState((current) => ({ ...current, source })),
+      setSource: (source) =>
+        setState((current) => {
+          const empty = current.adf.toLowerCase().includes("empty")
+          if (source === "adf" && empty) {
+            toast.error("Feeder is empty")
+            return current
+          }
+          return { ...current, source }
+        }),
       refresh,
       scan,
     }),
