@@ -8,6 +8,8 @@ import { AnimatedButton } from "@/components/ui/animated-button"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
+import { glass } from "@/lib/glass"
+import { cn } from "@/lib/utils"
 import { useRecipients } from "@/recipients/context"
 
 function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
@@ -145,7 +147,7 @@ export function RecipientsDashboard() {
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col bg-background">
-      <header className="glass-header sticky top-0 border-b border-white/20 dark:border-white/10">
+      <header className={cn(glass.overlay, "sticky top-0 border-b border-white/20 dark:border-white/10")}>
         <div className="mx-auto flex h-16 w-full max-w-xl items-center justify-between gap-4 px-6">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">Xerox B305</h1>
@@ -191,7 +193,10 @@ export function RecipientsDashboard() {
             transform: "perspective(500px) rotateX(0deg) scale(1)",
           }}
           transition={{ type: "spring", stiffness: 150, damping: 25 }}
-          className="squircle bg-background grid w-full max-w-[calc(100%-2rem)] gap-4 border p-6 shadow-lg sm:max-w-lg"
+          className={cn(
+            glass.frosted,
+            "squircle grid w-full max-w-[calc(100%-2rem)] gap-4 border border-white/20 p-6 dark:border-white/10 sm:max-w-lg"
+          )}
         >
           <div className="flex flex-col gap-1">
             <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">
