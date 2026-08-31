@@ -1,7 +1,7 @@
 "use client"
 
 import { cva, type VariantProps } from "class-variance-authority"
-import { motion, type HTMLMotionProps } from "motion/react"
+import { motion, useReducedMotion, type HTMLMotionProps } from "motion/react"
 
 import { cn } from "@/lib/utils"
 
@@ -47,11 +47,12 @@ function AnimatedButton({
   type = "button",
   ...props
 }: AnimatedButtonProps) {
+  const reduce = useReducedMotion()
   return (
     <motion.button
       type={type}
-      whileHover={{ scale: hoverScale }}
-      whileTap={{ scale: tapScale }}
+      whileHover={reduce ? undefined : { scale: hoverScale }}
+      whileTap={reduce ? undefined : { scale: tapScale }}
       transition={{ type: "spring", stiffness: 400, damping: 22 }}
       className={cn(animatedButtonVariants({ variant, size, className }))}
       {...props}
