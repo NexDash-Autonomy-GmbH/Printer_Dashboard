@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import base64
 import hmac
-import http.client
 import io
 import json
 import os
@@ -20,6 +19,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime
+from http.client import HTTPConnection, HTTPException
 from urllib.parse import urlsplit
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -198,7 +198,7 @@ def http(
         hdrs_in.update(headers)
     attempts = 2 if method in ("GET", "DELETE") else 1
     for attempt in range(attempts):
-        conn: http.client.HTTPConnection | None = getattr(_tls, "conn", None)
+        conn: HTTPConnection | None = getattr(_tls, "conn", None)
         reused = (
             conn is not None
             and conn.host == parts.hostname
@@ -212,7 +212,7 @@ def http(
                         conn.close()
                     except Exception:
                         pass
-                conn = http.client.HTTPConnection(parts.hostname, port, timeout=timeout)
+                conn = HTTPConnection(parts.hostname, port, timeout=timeout)
                 _tls.conn = conn
             else:
                 conn.timeout = timeout
@@ -223,7 +223,7 @@ def http(
             body = resp.read()
             hdrs = {k.lower(): v for k, v in resp.headers.items()}
             return resp.status, hdrs, body
-        except (TimeoutError, OSError, http.client.HTTPException):
+        except (TimeoutError, OSError, HTTPException):
             try:
                 if conn is not None:
                     conn.close()
