@@ -541,7 +541,6 @@ export function RecipientsDashboard() {
             setView(next)
           }
         }}
-        onAdd={() => setView("scan")}
       >
         <div className="flex min-h-full flex-col py-3 pr-3">
           <header className="mb-6 flex items-center justify-between gap-3">

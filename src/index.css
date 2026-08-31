@@ -184,6 +184,14 @@
     min-height: 100dvh;
     height: 100%;
   }
+  html,
+  body,
+  button,
+  input,
+  textarea,
+  select {
+    font-family: "Instrument Sans", "Instrument Sans Fallback", sans-serif;
+  }
   body {
     @apply bg-background text-foreground font-sans;
     touch-action: manipulation;

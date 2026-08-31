@@ -1,4 +1,4 @@
-import { PlusSignIcon, SidebarLeftIcon } from "@hugeicons/core-free-icons"
+import { SidebarLeftIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { motion, AnimatePresence } from "motion/react"
 import { useState, type ReactNode } from "react"
@@ -10,7 +10,6 @@ export interface MacOSSidebarProps {
   children?: ReactNode
   className?: string
   onSelect?: (index: number) => void
-  onAdd?: () => void
 }
 
 export function MacOSSidebar({
@@ -20,7 +19,6 @@ export function MacOSSidebar({
   children,
   className = "",
   onSelect,
-  onAdd,
 }: MacOSSidebarProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number>(initialSelectedIndex)
@@ -28,7 +26,7 @@ export function MacOSSidebar({
 
   return (
     <div
-      className={`theme-injected bg-muted relative flex w-full overflow-hidden rounded-lg p-3 sm:min-w-[480px] ${className}`}
+      className={`theme-injected font-sans bg-muted relative flex w-full overflow-hidden rounded-lg p-3 sm:min-w-[480px] ${className}`}
     >
       <motion.div
         animate={{
@@ -41,25 +39,9 @@ export function MacOSSidebar({
       >
         <div
           className={`flex w-full items-center ${
-            isOpen ? "justify-end gap-4" : "justify-center"
+            isOpen ? "justify-end" : "justify-center"
           } text-muted-foreground shrink-0 p-2`}
         >
-          <AnimatePresence>
-            {isOpen && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <HugeiconsIcon
-                  icon={PlusSignIcon}
-                  className="size-5 cursor-pointer"
-                  onClick={() => onAdd?.()}
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
           <motion.div
             layout
             className="flex shrink-0 items-center justify-center"

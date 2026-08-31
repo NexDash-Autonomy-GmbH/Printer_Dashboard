@@ -1,4 +1,4 @@
-import { PlusSignIcon, SidebarLeftIcon } from "@hugeicons/core-free-icons"
+import { SidebarLeftIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
 import { motion, AnimatePresence } from "motion/react"
 import { useState, type ReactNode } from "react"
@@ -38,24 +38,9 @@ export function MacOSSidebar({
       >
         <div
           className={`flex items-center w-full ${
-            isOpen ? "justify-end gap-4" : "justify-center"
+            isOpen ? "justify-end" : "justify-center"
           } text-neutral-700 dark:text-neutral-300 p-2 shrink-0`}
         >
-          <AnimatePresence>
-            {isOpen && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.8 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.8 }}
-                transition={{ duration: 0.2 }}
-              >
-                <HugeiconsIcon
-                  icon={PlusSignIcon}
-                  className="size-5 cursor-pointer"
-                />
-              </motion.div>
-            )}
-          </AnimatePresence>
           <motion.div
             layout
             className="shrink-0 flex items-center justify-center"
