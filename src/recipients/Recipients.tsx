@@ -8,7 +8,7 @@ import { AnimatedButton } from "@/components/ui/animated-button"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
+import { Toggle } from "@/components/ui/toggle"
 import { glass } from "@/lib/glass"
 import { cn } from "@/lib/utils"
 import { useRecipients } from "@/recipients/context"
@@ -24,10 +24,17 @@ function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
 function RecipientsAddForm() {
   const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
+  const draft = state.draft.trim().toLowerCase()
+  const suggestions = state.workspaceEmails.filter((email) => {
+    if (state.emails.includes(email)) return false
+    if (!draft) return true
+    const local = email.split("@")[0] || ""
+    return email.includes(draft) || local.startsWith(draft)
+  })
 
   return (
     <form
-      className="flex min-w-0 items-center gap-2"
+      className="flex min-w-0 flex-col gap-2"
       onSubmit={(event) => {
         event.preventDefault()
         startTransition(async () => {
@@ -35,24 +42,47 @@ function RecipientsAddForm() {
         })
       }}
     >
-      <input
-        id="recipient-email"
-        name="email"
-        type="email"
-        inputMode="email"
-        autoComplete="off"
-        spellCheck={false}
-        placeholder="email"
-        aria-label="Email"
-        value={state.draft}
-        aria-invalid={state.invalid}
-        onChange={(event) => actions.setDraft(event.target.value)}
-        className="h-11 min-w-0 flex-1 rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
-      />
-      <AnimatedButton type="submit" size="lg" disabled={pending}>
-        {pending ? <Spinner data-icon="inline-start" /> : null}
-        Add
-      </AnimatedButton>
+      <div className="flex min-w-0 items-center gap-2">
+        <input
+          id="recipient-email"
+          name="email"
+          type="text"
+          inputMode="email"
+          autoComplete="off"
+          spellCheck={false}
+          placeholder="parth or parth@nexdash.com"
+          aria-label="Email"
+          list="nexdash-workspace-emails"
+          value={state.draft}
+          aria-invalid={state.invalid}
+          onChange={(event) => actions.setDraft(event.target.value)}
+          className="h-11 min-w-0 flex-1 rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        />
+        <datalist id="nexdash-workspace-emails">
+          {state.workspaceEmails.map((email) => (
+            <option key={email} value={email} />
+          ))}
+        </datalist>
+        <AnimatedButton type="submit" size="lg" disabled={pending}>
+          {pending ? <Spinner data-icon="inline-start" /> : null}
+          Add
+        </AnimatedButton>
+      </div>
+      {suggestions.length > 0 ? (
+        <ul className="flex flex-wrap gap-1.5">
+          {suggestions.slice(0, 6).map((email) => (
+            <li key={email}>
+              <button
+                type="button"
+                className="rounded-full border border-input px-2.5 py-1 text-xs hover:bg-muted"
+                onClick={() => actions.setDraft(email)}
+              >
+                {email}
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
     </form>
   )
 }
@@ -155,26 +185,24 @@ function JobBanner() {
 function ScanSourceToggle() {
   const { state, actions } = useRecipients()
   return (
-    <ToggleGroup
-      value={[state.source === "adf" ? "adf" : "platen"]}
-      onValueChange={(next) => {
-        const value = next[0]
-        if (value === "platen" || value === "adf") {
-          actions.setSource(value)
-        }
-      }}
-      variant="outline"
-      spacing={0}
-      className="w-full"
-      aria-label="Scan from"
-    >
-      <ToggleGroupItem value="platen" className="flex-1">
+    <div className="flex w-full gap-1 rounded-lg border border-input p-0.5" role="group" aria-label="Scan from">
+      <Toggle
+        variant="outline"
+        className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+        pressed={state.source !== "adf"}
+        onPressedChange={() => actions.setSource("platen")}
+      >
         Glass
-      </ToggleGroupItem>
-      <ToggleGroupItem value="adf" className="flex-1">
+      </Toggle>
+      <Toggle
+        variant="outline"
+        className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+        pressed={state.source === "adf"}
+        onPressedChange={() => actions.setSource("adf")}
+      >
         Feeder
-      </ToggleGroupItem>
-    </ToggleGroup>
+      </Toggle>
+    </div>
   )
 }
 
@@ -272,10 +300,13 @@ export function RecipientsDashboard() {
             "squircle grid w-full max-w-[calc(100%-2rem)] gap-4 border border-white/20 p-6 dark:border-white/10 sm:max-w-lg"
           )}
         >
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col gap-2">
             <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">
               Scan
             </h2>
+            <p className="text-sm text-muted-foreground">
+              This panel talks to the Xerox B305. Feeder takes the stack and builds one PDF. Glass takes a single page. Mail is sent from the address in .env to Recipients, not to the sender.
+            </p>
             <p className="text-sm text-muted-foreground">
               Sender{" "}
               <span className="font-medium text-foreground" translate="no">

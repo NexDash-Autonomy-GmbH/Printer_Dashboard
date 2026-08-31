@@ -8,6 +8,7 @@ export type PrinterState = {
   from_name?: string | null
   ses_region: string
   emails: string[]
+  workspace_emails?: string[]
   web_ui: string
 }
 

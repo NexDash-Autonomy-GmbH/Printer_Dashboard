@@ -10,6 +10,7 @@ import os
 import re
 import smtplib
 import socket
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -33,6 +34,15 @@ A4_WIDTH = 2480
 A4_HEIGHT = 3508
 MAX_PAGES = 200
 PAGE_TIMEOUT = 180
+NEXDASH_MAILS = [
+    "parth@nexdash.com",
+    "esteban@nexdash.com",
+    "elisa@nexdash.com",
+    "franck@nexdash.com",
+    "michael@nexdash.com",
+    "karsten@nexdash.com",
+]
+_ses_nexdash: list[str] | None = None
 
 
 def load_dotenv(path: Path) -> None:
@@ -78,7 +88,56 @@ def load_config() -> dict[str, Any]:
         "from_name": env("SMTP_FROM_NAME") or from_email,
     }
     data["emails"] = [e for e in data["emails"] if e.strip().lower() != from_email]
+    data["workspace_emails"] = workspace_emails(from_email)
     return data
+
+
+def ses_nexdash_emails() -> list[str]:
+    global _ses_nexdash
+    if _ses_nexdash is not None:
+        return _ses_nexdash
+    try:
+        raw = subprocess.check_output(
+            [
+                "aws",
+                "ses",
+                "list-identities",
+                "--region",
+                "eu-central-1",
+                "--identity-type",
+                "EmailAddress",
+                "--output",
+                "json",
+            ],
+            timeout=8,
+            stderr=subprocess.DEVNULL,
+        )
+        identities = json.loads(raw).get("Identities") or []
+        _ses_nexdash = [
+            str(item).strip().lower()
+            for item in identities
+            if str(item).strip().lower().endswith("@nexdash.com")
+        ]
+    except Exception:
+        _ses_nexdash = []
+    return _ses_nexdash
+
+
+def workspace_emails(from_email: str) -> list[str]:
+    found: list[str] = []
+    for raw in env("WORKSPACE_EMAILS").split(","):
+        addr = raw.strip().lower()
+        if addr.endswith("@nexdash.com"):
+            found.append(addr)
+    found.extend(ses_nexdash_emails())
+    found.extend(NEXDASH_MAILS)
+    unique: list[str] = []
+    sender = from_email.strip().lower()
+    for addr in found:
+        if addr and addr != sender and addr not in unique:
+            unique.append(addr)
+    unique.sort()
+    return unique
 
 
 def save_config(cfg: dict[str, Any]) -> None:
@@ -471,6 +530,7 @@ def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
         "from_name": smtp.get("from_name"),
         "ses_region": smtp.get("host"),
         "emails": [e for e in (cfg.get("emails") or []) if e.lower() != sender],
+        "workspace_emails": list(cfg.get("workspace_emails") or []),
         "web_ui": f"{base}/",
     }
 

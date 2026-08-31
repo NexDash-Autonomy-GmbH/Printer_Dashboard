@@ -16,6 +16,7 @@ export type JobStatus = "idle" | "scanning" | "sent" | "saved" | "failed"
 
 export type RecipientsState = {
   emails: string[]
+  workspaceEmails: string[]
   fromEmail: string
   printerHost: string
   model: string
@@ -51,6 +52,9 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
   const fromEmail = (data.from_email || "").toLowerCase()
   return {
     emails: (data.emails || []).filter((email) => email.toLowerCase() !== fromEmail),
+    workspaceEmails: (data.workspace_emails || []).filter(
+      (email) => email.toLowerCase() !== fromEmail
+    ),
     fromEmail: data.from_email || "",
     printerHost: data.printer_host,
     model: data.model,
@@ -65,6 +69,7 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
 export function RecipientsProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<RecipientsState>({
     emails: [],
+    workspaceEmails: [],
     fromEmail: "",
     printerHost: "",
     model: "Xerox B305 MFP",
@@ -104,12 +109,15 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   }, [refresh])
 
   const add = useCallback(async () => {
-    const value = state.draft.trim()
+    let value = state.draft.trim()
     if (!value) {
       setState((current) => ({ ...current, invalid: true }))
       return
     }
-    if (value.toLowerCase() === state.fromEmail.toLowerCase()) {
+    if (!value.includes("@") && state.fromEmail.includes("@")) {
+      value = `${value}@${state.fromEmail.split("@")[1]}`
+    }
+    if (state.fromEmail && value.toLowerCase() === state.fromEmail.toLowerCase()) {
       toast.error("That address is the sender")
       setState((current) => ({ ...current, invalid: true }))
       return
