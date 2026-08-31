@@ -12,6 +12,8 @@ import {
 
 export type ScanSource = "auto" | "platen" | "adf"
 
+export type JobStatus = "idle" | "scanning" | "sent" | "saved" | "failed"
+
 export type RecipientsState = {
   emails: string[]
   fromEmail: string
@@ -25,6 +27,8 @@ export type RecipientsState = {
   source: ScanSource
   loaded: boolean
   loadError: string | null
+  jobStatus: JobStatus
+  jobMessage: string
 }
 
 export type RecipientsActions = {
@@ -72,6 +76,8 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     source: "auto",
     loaded: false,
     loadError: null,
+    jobStatus: "idle",
+    jobMessage: "",
   })
 
   const refresh = useCallback(async () => {
@@ -135,13 +141,39 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   }, [])
 
   const scan = useCallback(async () => {
+    setState((current) => ({
+      ...current,
+      jobStatus: "scanning",
+      jobMessage: "Scanning…",
+    }))
     const result = await runScan(state.source)
     await refresh()
-    if (result.emailed) {
-      toast.success(`Scan emailed to ${result.recipients?.join(", ")}`)
+    if (result.stage === "sent" || result.emailed) {
+      const to = result.recipients?.join(", ") || "recipients"
+      setState((current) => ({
+        ...current,
+        jobStatus: "sent",
+        jobMessage: `Sent to ${to}`,
+      }))
+      toast.success(`Sent to ${to}`)
       return
     }
-    toast.success("Scan saved. No recipients, so no mail was sent.")
+    if (result.stage === "saved") {
+      setState((current) => ({
+        ...current,
+        jobStatus: "saved",
+        jobMessage: "Scan saved. No recipients, so no mail was sent.",
+      }))
+      toast.success("Scan saved. No mail sent.")
+      return
+    }
+    const message = result.error || "Scan failed"
+    setState((current) => ({
+      ...current,
+      jobStatus: "failed",
+      jobMessage: result.scanned ? `Scan saved. Mail failed: ${message}` : message,
+    }))
+    toast.error(message)
   }, [refresh, state.source])
 
   const actions = useMemo<RecipientsActions>(

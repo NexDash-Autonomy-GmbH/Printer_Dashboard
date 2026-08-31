@@ -1,6 +1,6 @@
 import { useTransition } from "react"
 import { motion } from "motion/react"
-import { CheckIcon, ScanLineIcon } from "lucide-react"
+import { CheckIcon, CircleAlertIcon, ScanLineIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -112,15 +112,62 @@ function RecipientsList() {
   )
 }
 
+function JobBanner() {
+  const { state } = useRecipients()
+  if (state.jobStatus === "idle") {
+    return null
+  }
+  if (state.jobStatus === "scanning") {
+    return (
+      <div className="flex items-center gap-2">
+        <StatusIndicator state="fixing" size="sm" label={state.jobMessage} />
+      </div>
+    )
+  }
+  if (state.jobStatus === "sent") {
+    return (
+      <Alert>
+        <CheckIcon />
+        <AlertTitle>Sent</AlertTitle>
+        <AlertDescription>{state.jobMessage}</AlertDescription>
+      </Alert>
+    )
+  }
+  if (state.jobStatus === "saved") {
+    return (
+      <Alert>
+        <CheckIcon />
+        <AlertTitle>Saved</AlertTitle>
+        <AlertDescription>{state.jobMessage}</AlertDescription>
+      </Alert>
+    )
+  }
+  return (
+    <Alert variant="destructive">
+      <CircleAlertIcon />
+      <AlertTitle>Failed</AlertTitle>
+      <AlertDescription>{state.jobMessage}</AlertDescription>
+    </Alert>
+  )
+}
+
 function RecipientsScan() {
-  const { actions } = useRecipients()
+  const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
+  const label =
+    state.jobStatus === "scanning"
+      ? "Scanning…"
+      : state.jobStatus === "sent"
+        ? "Sent"
+        : state.jobStatus === "failed"
+          ? "Retry scan"
+          : "Scan"
 
   return (
     <AnimatedButton
       size="lg"
       className="w-full"
-      disabled={pending}
+      disabled={pending || state.jobStatus === "scanning"}
       onClick={() => {
         startTransition(async () => {
           try {
@@ -131,12 +178,12 @@ function RecipientsScan() {
         })
       }}
     >
-      {pending ? (
+      {pending || state.jobStatus === "scanning" ? (
         <Spinner data-icon="inline-start" />
       ) : (
         <ScanLineIcon data-icon="inline-start" aria-hidden="true" />
       )}
-      {pending ? "Scanning…" : "Scan"}
+      {label}
     </AnimatedButton>
   )
 }
@@ -217,6 +264,7 @@ export function RecipientsDashboard() {
           ) : null}
           <RecipientsAddForm />
           <RecipientsList />
+          <JobBanner />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <RecipientsScan />
           </div>

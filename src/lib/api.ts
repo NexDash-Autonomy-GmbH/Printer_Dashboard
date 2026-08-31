@@ -13,6 +13,8 @@ export type PrinterState = {
 
 export type ScanResult = {
   ok: boolean
+  stage?: "scan_failed" | "mail_failed" | "sent" | "saved"
+  scanned?: boolean
   error?: string
   files?: string[]
   recipients?: string[]
@@ -66,9 +68,5 @@ export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanRe
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source }),
   })
-  const data = await readJson<ScanResult>(res)
-  if (!data.ok) {
-    throw new Error(data.error || "Scan failed")
-  }
-  return data
+  return readJson<ScanResult>(res)
 }

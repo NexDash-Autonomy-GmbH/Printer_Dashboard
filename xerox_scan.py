@@ -330,7 +330,13 @@ def run_scan(
         base = printer_base(cfg)
         chosen = pick_source(base, source)
     except RuntimeError as err:
-        return {"ok": False, "error": str(err)}
+        return {
+            "ok": False,
+            "stage": "scan_failed",
+            "scanned": False,
+            "emailed": False,
+            "error": str(err),
+        }
 
     log.append(f"scanning {chosen.lower()} on {cfg['printer_host']}")
     code, hdrs, body = http(
@@ -342,11 +348,23 @@ def run_scan(
     )
     if code not in (201, 200):
         snippet = body.decode("utf-8", errors="replace")[:500]
-        return {"ok": False, "error": f"scan job rejected (HTTP {code})\n{snippet}"}
+        return {
+            "ok": False,
+            "stage": "scan_failed",
+            "scanned": False,
+            "emailed": False,
+            "error": f"scan job rejected (HTTP {code})\n{snippet}",
+        }
 
     location = hdrs.get("location")
     if not location:
-        return {"ok": False, "error": "scanner did not return a job URL"}
+        return {
+            "ok": False,
+            "stage": "scan_failed",
+            "scanned": False,
+            "emailed": False,
+            "error": "scanner did not return a job URL",
+        }
     if location.startswith("/"):
         location = base + location
     elif not location.startswith("http"):
@@ -361,13 +379,25 @@ def run_scan(
         if code != 200:
             snippet = data.decode("utf-8", errors="replace")[:500]
             http(location, method="DELETE", timeout=10)
-            return {"ok": False, "error": f"no scan data (HTTP {code})\n{snippet}"}
+            return {
+                "ok": False,
+                "stage": "scan_failed",
+                "scanned": False,
+                "emailed": False,
+                "error": f"no scan data (HTTP {code})\n{snippet}",
+            }
         pages.append((hdrs.get("content-type", "application/pdf"), data))
         log.append(f"page {len(pages)} ({len(data)} bytes)")
 
     if not pages:
         http(location, method="DELETE", timeout=10)
-        return {"ok": False, "error": "scanner returned no pages"}
+        return {
+            "ok": False,
+            "stage": "scan_failed",
+            "scanned": False,
+            "emailed": False,
+            "error": "scanner returned no pages",
+        }
 
     stamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     out_dir = Path(cfg["scan_dir"]).expanduser()
@@ -388,16 +418,23 @@ def run_scan(
         except Exception as err:
             return {
                 "ok": False,
+                "stage": "mail_failed",
+                "scanned": True,
+                "emailed": False,
                 "error": str(err),
                 "files": [str(dest)],
+                "recipients": recipients,
                 "log": log,
             }
 
+    stage = "sent" if emailed else "saved"
     return {
         "ok": True,
+        "stage": stage,
+        "scanned": True,
+        "emailed": emailed,
         "files": [str(dest)],
         "recipients": recipients,
-        "emailed": emailed,
         "pages": len(pages),
         "log": log,
     }
@@ -545,7 +582,7 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
                 return
             if parsed.path == "/api/scan":
                 result = run_scan(load_config(), source="auto")
-                self._json(200 if result.get("ok") else 400, result)
+                self._json(200, result)
                 return
             self.send_error(404)
 
