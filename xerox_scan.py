@@ -37,6 +37,7 @@ A4_HEIGHT = 3508
 MAX_PAGES = 200
 PAGE_TIMEOUT = 180
 NEXDASH_MAILS = [
+    "alwin@nexdash.com",
     "parth@nexdash.com",
     "esteban@nexdash.com",
     "elisa@nexdash.com",
