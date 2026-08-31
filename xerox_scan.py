@@ -581,7 +581,10 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
                 self._json(200, {"ok": True, "emails": emails, "added": False})
                 return
             if parsed.path == "/api/scan":
-                result = run_scan(load_config(), source="auto")
+                source = str(payload.get("source") or "auto")
+                if source not in ("auto", "platen", "adf"):
+                    source = "auto"
+                result = run_scan(load_config(), source=source)
                 self._json(200, result)
                 return
             self.send_error(404)

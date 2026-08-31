@@ -73,7 +73,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     scanDir: "",
     draft: "",
     invalid: false,
-    source: "auto",
+    source: "platen",
     loaded: false,
     loadError: null,
     jobStatus: "idle",

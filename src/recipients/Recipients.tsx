@@ -8,6 +8,7 @@ import { AnimatedButton } from "@/components/ui/animated-button"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 import { glass } from "@/lib/glass"
 import { cn } from "@/lib/utils"
 import { useRecipients } from "@/recipients/context"
@@ -151,6 +152,32 @@ function JobBanner() {
   )
 }
 
+function ScanSourceToggle() {
+  const { state, actions } = useRecipients()
+  return (
+    <ToggleGroup
+      value={[state.source === "adf" ? "adf" : "platen"]}
+      onValueChange={(next) => {
+        const value = next[0]
+        if (value === "platen" || value === "adf") {
+          actions.setSource(value)
+        }
+      }}
+      variant="outline"
+      spacing={0}
+      className="w-full"
+      aria-label="Scan from"
+    >
+      <ToggleGroupItem value="platen" className="flex-1">
+        Glass
+      </ToggleGroupItem>
+      <ToggleGroupItem value="adf" className="flex-1">
+        Feeder
+      </ToggleGroupItem>
+    </ToggleGroup>
+  )
+}
+
 function RecipientsScan() {
   const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
@@ -265,6 +292,7 @@ export function RecipientsDashboard() {
           <RecipientsAddForm />
           <RecipientsList />
           <JobBanner />
+          <ScanSourceToggle />
           <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
             <RecipientsScan />
           </div>
