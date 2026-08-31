@@ -24,21 +24,45 @@ Open http://127.0.0.1:8765/ on this Mac, or `http://<this-machine-ip>:8765/` on 
 
 ## Mail
 
-Use the Google Workspace mailbox (for example `alwin@nexdash.com`) with:
+SMTP is Google Workspace (`smtp.gmail.com`, port 587). The sender is whoever you put in `.env`. A normal Google password does not work. You need an App Password.
 
-| | User SMTP | Org relay |
-|---|---|---|
-| Host | `smtp.gmail.com` | `smtp-relay.gmail.com` |
-| Port | 587 (TLS) | 587, 465, or 25 |
-| Auth | full address + 16-character App Password | IP allowlist or SMTP auth |
+### Make an App Password
 
-That mailbox can send to anyone at `nexdash.com`, and typically to any other address, within Google’s daily limits (about 2,000 messages/day on `smtp.gmail.com`, 10,000 recipients/day on relay).
+The person who will send must do this on **their** Google account (the mailbox that should appear as From).
 
-If 2-Step Verification is on, create an App Password: Google Account → Security → App passwords. Put that 16-character value in `SMTP_PASSWORD`. A normal Workspace password is rejected (`Application-specific password required`).
+1. Turn on 2-Step Verification for that account if it is not on: [Google Account security](https://myaccount.google.com/security).
+2. Open [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) while signed in as that person.
+3. If Google asks you to sign in again, use that mailbox (for example `parth@nexdash.com`), not someone else’s.
+4. App name: `Printer Dashboard` (any label is fine).
+5. Create. Google shows a 16-character password in four groups, like `xxxx xxxx xxxx xxxx`.
+6. Copy it. Google will not show it again. Spaces are optional; the app stores it with spaces removed.
 
-SES on the laptop IAM user can send as `alwin@nexdash.com` only. Other verified identities such as `parth@nexdash.com` return AccessDenied. Workspace SMTP is the send path this app uses.
+If the App passwords page is missing, the admin has blocked it, or 2-Step Verification is off.
 
-Gmail attachment limit is 25 MB. A 100-page colour 300 dpi scan can exceed that.
+### Point the dashboard at that person as sender
+
+On the office machine that runs the dashboard:
+
+1. Open `.env` in the project root (copy from `.env.example` if you do not have one).
+2. Set:
+
+```
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USER=the-person@nexdash.com
+SMTP_PASSWORD=the16characterapppassword
+SMTP_FROM_EMAIL=the-person@nexdash.com
+SMTP_FROM_NAME=Their Name
+```
+
+3. Do not commit `.env`.
+4. Restart the dashboard (`python3 xerox_scan.py dash`) so it reloads `.env`.
+5. Hard-refresh the UI. The dialog Sender line should show that address.
+6. That address is removed from Recipients automatically. Add other people as recipients if you still want them on the list.
+
+The sender can mail anyone at `nexdash.com` (Gmail limit about 2,000 messages/day). Attachment cap is 25 MB.
+
+This app does not use Amazon SES. The laptop SES user can only send as some identities and is the wrong path.
 
 ## CLI
 
