@@ -5,6 +5,7 @@ export type PrinterState = {
   adf: string
   scan_dir: string
   from_email: string | null
+  from_name?: string | null
   ses_region: string
   emails: string[]
   web_ui: string

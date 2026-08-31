@@ -44,9 +44,10 @@ export type RecipientsContextValue = {
 const RecipientsContext = createContext<RecipientsContextValue | null>(null)
 
 function applyPrinter(data: PrinterState): Partial<RecipientsState> {
+  const fromEmail = (data.from_email || "").toLowerCase()
   return {
-    emails: data.emails,
-    fromEmail: data.from_email || "alwin@nexdash.com",
+    emails: (data.emails || []).filter((email) => email.toLowerCase() !== fromEmail),
+    fromEmail: data.from_email || "",
     printerHost: data.printer_host,
     model: data.model,
     scanner: data.scanner,
@@ -60,7 +61,7 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
 export function RecipientsProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<RecipientsState>({
     emails: [],
-    fromEmail: "alwin@nexdash.com",
+    fromEmail: "",
     printerHost: "",
     model: "Xerox B305 MFP",
     scanner: "…",
@@ -99,6 +100,11 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   const add = useCallback(async () => {
     const value = state.draft.trim()
     if (!value) {
+      setState((current) => ({ ...current, invalid: true }))
+      return
+    }
+    if (value.toLowerCase() === state.fromEmail.toLowerCase()) {
+      toast.error("That address is the sender")
       setState((current) => ({ ...current, invalid: true }))
       return
     }

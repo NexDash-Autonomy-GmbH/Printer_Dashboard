@@ -68,14 +68,16 @@ def load_config() -> dict[str, Any]:
     data["scan_dir"] = env("SCAN_DIR") or data.get("scan_dir") or str(
         Path.home() / "Documents/Xerox-scans"
     )
+    from_email = (env("SMTP_FROM_EMAIL") or env("SMTP_USER")).strip().lower()
     data["smtp"] = {
         "host": env("SMTP_HOST", "smtp.gmail.com"),
         "port": int(env("SMTP_PORT", "587") or "587"),
         "username": env("SMTP_USER"),
         "password": env("SMTP_PASSWORD"),
-        "from_email": env("SMTP_FROM_EMAIL") or env("SMTP_USER"),
-        "from_name": env("SMTP_FROM_NAME") or "Alwin Paul",
+        "from_email": from_email,
+        "from_name": env("SMTP_FROM_NAME") or from_email,
     }
+    data["emails"] = [e for e in data["emails"] if e.strip().lower() != from_email]
     return data
 
 
@@ -163,6 +165,10 @@ def cmd_emails(cfg: dict[str, Any]) -> int:
 
 def cmd_add_email(cfg: dict[str, Any], raw: str) -> int:
     addr = normalize_email(raw)
+    sender = ((cfg.get("smtp") or {}).get("from_email") or "").lower()
+    if addr == sender:
+        print(f"{addr} is the sender")
+        return 1
     emails = list(cfg.get("emails") or [])
     if addr in emails:
         print(f"already listed: {addr}")
@@ -417,6 +423,7 @@ def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
         state = root.findtext("pwg:State", default="?", namespaces=ESCL_NS) or "?"
         adf = root.findtext("scan:AdfState", default="?", namespaces=ESCL_NS) or "?"
     smtp = cfg.get("smtp") or {}
+    sender = (smtp.get("from_email") or "").lower()
     return {
         "printer_host": cfg.get("printer_host"),
         "model": "Xerox B305 MFP",
@@ -424,8 +431,9 @@ def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
         "adf": adf,
         "scan_dir": cfg.get("scan_dir"),
         "from_email": smtp.get("from_email"),
+        "from_name": smtp.get("from_name"),
         "ses_region": smtp.get("host"),
-        "emails": list(cfg.get("emails") or []),
+        "emails": [e for e in (cfg.get("emails") or []) if e.lower() != sender],
         "web_ui": f"{base}/",
     }
 
@@ -522,6 +530,10 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
                     self._json(400, {"ok": False, "error": str(err)})
                     return
                 current = load_config()
+                sender = (current.get("smtp") or {}).get("from_email") or ""
+                if addr == sender:
+                    self._json(400, {"ok": False, "error": f"{addr} is the sender, not a recipient"})
+                    return
                 emails = list(current.get("emails") or [])
                 if addr not in emails:
                     emails.append(addr)

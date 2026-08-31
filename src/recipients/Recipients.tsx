@@ -1,4 +1,5 @@
 import { useTransition } from "react"
+import { motion } from "motion/react"
 import { CheckIcon, ScanLineIcon } from "lucide-react"
 import { toast } from "sonner"
 
@@ -116,6 +117,7 @@ function RecipientsScan() {
   return (
     <AnimatedButton
       size="lg"
+      className="w-full"
       disabled={pending}
       onClick={() => {
         startTransition(async () => {
@@ -142,9 +144,9 @@ export function RecipientsDashboard() {
   const adfEmpty = state.adf.toLowerCase().includes("empty")
 
   return (
-    <div className="flex min-h-dvh flex-col bg-background">
+    <div className="flex min-h-dvh flex-1 flex-col bg-background">
       <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+        <div className="mx-auto flex w-full max-w-xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">Xerox B305</h1>
             <div className="mt-1 flex flex-wrap items-center gap-4">
@@ -173,19 +175,47 @@ export function RecipientsDashboard() {
         </div>
       </header>
 
-      <main className="flex flex-1 items-center justify-center px-4 py-8 sm:px-6">
-        <div className="flex w-full max-w-xl flex-col gap-5">
-        {state.loadError ? (
-          <Alert>
-            <AlertTitle>Printer unreachable</AlertTitle>
-            <AlertDescription>{state.loadError}</AlertDescription>
-          </Alert>
-        ) : null}
-
-        <RecipientsAddForm />
-        <RecipientsList />
-        <RecipientsScan />
-        </div>
+      <main className="flex flex-1 flex-col items-center justify-center bg-black/40 px-4 py-8 sm:px-6">
+        <motion.div
+          role="dialog"
+          aria-labelledby="scan-dialog-title"
+          aria-modal="true"
+          initial={{
+            opacity: 0,
+            filter: "blur(4px)",
+            transform: "perspective(500px) rotateX(-12deg) scale(0.96)",
+          }}
+          animate={{
+            opacity: 1,
+            filter: "blur(0px)",
+            transform: "perspective(500px) rotateX(0deg) scale(1)",
+          }}
+          transition={{ type: "spring", stiffness: 150, damping: 25 }}
+          className="bg-background grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg border p-6 shadow-lg sm:max-w-lg"
+        >
+          <div className="flex flex-col gap-1">
+            <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">
+              Scan
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Sender{" "}
+              <span className="font-medium text-foreground" translate="no">
+                {state.fromEmail || "SMTP_FROM_EMAIL"}
+              </span>
+            </p>
+          </div>
+          {state.loadError ? (
+            <Alert>
+              <AlertTitle>Printer unreachable</AlertTitle>
+              <AlertDescription>{state.loadError}</AlertDescription>
+            </Alert>
+          ) : null}
+          <RecipientsAddForm />
+          <RecipientsList />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <RecipientsScan />
+          </div>
+        </motion.div>
       </main>
     </div>
   )
