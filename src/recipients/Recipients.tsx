@@ -17,8 +17,32 @@ function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
   const value = scanner.toLowerCase()
   if (value.includes("idle")) return "active"
   if (value.includes("processing") || value.includes("busy")) return "fixing"
-  if (value.includes("unreachable") || value === "?") return "down"
+  if (value.includes("unreachable") || value === "?" || value === "…") return "down"
   return "idle"
+}
+
+function printerDown(scanner: string): boolean {
+  return scannerState(scanner) === "down"
+}
+
+function adfView(
+  scanner: string,
+  adf: string
+): { state: "active" | "idle"; label: string } {
+  const value = (adf || "").toLowerCase()
+  if (
+    printerDown(scanner) ||
+    value === "" ||
+    value === "unknown" ||
+    value === "?" ||
+    value === "…"
+  ) {
+    return { state: "idle", label: "ADF unknown" }
+  }
+  if (value.includes("empty")) {
+    return { state: "idle", label: "ADF empty" }
+  }
+  return { state: "active", label: "ADF loaded" }
 }
 
 function RecipientsAddForm() {
@@ -178,7 +202,7 @@ function JobBanner() {
 
 function ScanSourceToggle() {
   const { state, actions } = useRecipients()
-  const feederEmpty = state.adf.toLowerCase().includes("empty")
+  const feederEmpty = adfView(state.scanner, state.adf).label === "ADF empty"
   return (
     <div className="flex flex-col gap-2">
       <div className="flex w-full gap-1 rounded-lg border border-input p-0.5" role="group" aria-label="Scan from">
@@ -210,7 +234,8 @@ function ScanSourceToggle() {
 function RecipientsScan() {
   const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
-  const feederEmpty = state.source === "adf" && state.adf.toLowerCase().includes("empty")
+  const feederEmpty =
+    state.source === "adf" && adfView(state.scanner, state.adf).label === "ADF empty"
   const label =
     state.jobStatus === "scanning"
       ? "Scanning…"
@@ -245,7 +270,7 @@ function RecipientsScan() {
 
 export function RecipientsDashboard() {
   const { state } = useRecipients()
-  const adfEmpty = state.adf.toLowerCase().includes("empty")
+  const adf = adfView(state.scanner, state.adf)
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col bg-background">
@@ -261,8 +286,8 @@ export function RecipientsDashboard() {
               />
               <StatusIndicator
                 size="sm"
-                state={adfEmpty ? "idle" : "active"}
-                label={adfEmpty ? "ADF empty" : "ADF loaded"}
+                state={adf.state}
+                label={adf.label}
               />
             </div>
           </div>
