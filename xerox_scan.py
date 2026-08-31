@@ -174,6 +174,8 @@ def http(
     except urllib.error.HTTPError as err:
         hdrs = {k.lower(): v for k, v in err.headers.items()} if err.headers else {}
         return err.code, hdrs, err.read() or b""
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return 0, {}, b""
 
 
 class BadEmail(ValueError):
@@ -515,7 +517,7 @@ def cmd_scan(cfg: dict[str, Any], args: argparse.Namespace) -> int:
 
 def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
     base = printer_base(cfg)
-    code, _, body = http(f"{base}/eSCL/ScannerStatus", timeout=8)
+    code, _, body = http(f"{base}/eSCL/ScannerStatus", timeout=2)
     state = "unreachable"
     adf = "unknown"
     if code == 200:
