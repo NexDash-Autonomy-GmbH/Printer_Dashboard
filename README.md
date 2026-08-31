@@ -95,7 +95,20 @@ ESP32 → Go API (outbound HTTPS)
 go run ./cmd/api          # API on :8780, also serves dist/
 ```
 
-Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI. GitHub Actions reads `secrets.VITE_API_BASE`.
+Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI.
+
+### Cloudflare Pages (free)
+
+The UI builds to `dist/` and deploys with Wrangler:
+
+```bash
+npm run build
+npx wrangler pages deploy dist --project-name printer-dashboard
+```
+
+GitHub Action `.github/workflows/pages.yml` does the same on push to `main`. Add repo secrets `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Optional: `VITE_API_BASE` so Scan talks to the Go API instead of the Pages origin.
+
+The Pages URL only hosts the webpage. Scan still needs the Go API plus an ESP32 or office-agent on the Xerox LAN.
 
 Flash the ESP32 from `esp32/README.md`. Until TinyGo is installed, run `go run ./cmd/office-agent` on a machine that can ping the printer.
 
