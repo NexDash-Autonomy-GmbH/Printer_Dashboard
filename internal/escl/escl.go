@@ -15,6 +15,23 @@ const (
 	MaxPages = 200
 )
 
+var client = &http.Client{
+	Timeout: 180 * time.Second,
+	Transport: &http.Transport{
+		MaxIdleConns:        8,
+		MaxIdleConnsPerHost: 4,
+		IdleConnTimeout:     30 * time.Second,
+		DisableCompression:  false,
+	},
+}
+
+func shortClient() *http.Client {
+	return &http.Client{
+		Timeout:   2 * time.Second,
+		Transport: client.Transport,
+	}
+}
+
 type Page struct {
 	Type string
 	Data []byte
@@ -22,8 +39,7 @@ type Page struct {
 
 func Status(printerHost string) (scanner, adf string) {
 	scanner, adf = "unreachable", "unknown"
-	client := &http.Client{Timeout: 2 * time.Second}
-	resp, err := client.Get("http://" + printerHost + "/eSCL/ScannerStatus")
+	resp, err := shortClient().Get("http://" + printerHost + "/eSCL/ScannerStatus")
 	if err != nil {
 		return
 	}
@@ -89,7 +105,6 @@ func Scan(printerHost, inputSource string) ([]Page, error) {
 </scan:ScanSettings>
 `, A4Width, height, inputSource)
 
-	client := &http.Client{Timeout: 180 * time.Second}
 	base := "http://" + printerHost
 	req, err := http.NewRequest(http.MethodPost, base+"/eSCL/ScanJobs", bytes.NewReader([]byte(xml)))
 	if err != nil {

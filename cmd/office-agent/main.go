@@ -56,7 +56,12 @@ func main() {
 }
 
 func poll(api, token string) (job, source, printer string, err error) {
-	resp, err := http.Get(api + "/bridge/poll?token=" + token)
+	req, err := http.NewRequest(http.MethodGet, api+"/bridge/poll", nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return "", "", "", err
 	}
@@ -71,11 +76,18 @@ func poll(api, token string) (job, source, printer string, err error) {
 }
 
 func post(api, token, job, errMsg string, pdf []byte) {
-	u := fmt.Sprintf("%s/bridge/result?token=%s&job=%s", api, token, job)
+	u := fmt.Sprintf("%s/bridge/result?job=%s", api, job)
 	if errMsg != "" {
 		u += "&error=" + errMsg
 	}
-	resp, err := http.Post(u, "application/pdf", bytes.NewReader(pdf))
+	req, err := http.NewRequest(http.MethodPost, u, bytes.NewReader(pdf))
+	if err != nil {
+		log.Println("result", err)
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/pdf")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		log.Println("result", err)
 		return

@@ -57,6 +57,7 @@ int httpGet(String url, String &out) {
     HTTPClient http;
     http.setTimeout(25000);
     http.begin(client, url);
+    http.addHeader("Authorization", String("Bearer ") + BRIDGE_TOKEN);
     int code = http.GET();
     out = http.getString();
     http.end();
@@ -79,6 +80,7 @@ int httpPost(String url, const char *ctype, uint8_t *data, size_t len, String &o
     HTTPClient http;
     http.setTimeout(180000);
     http.begin(client, url);
+    http.addHeader("Authorization", String("Bearer ") + BRIDGE_TOKEN);
     http.addHeader("Content-Type", ctype);
     int code = http.POST(data, len);
     out = http.getString();
@@ -104,7 +106,7 @@ void loop() {
     return;
   }
 
-  String pollUrl = String(API_BASE) + "/bridge/poll?token=" + BRIDGE_TOKEN;
+  String pollUrl = String(API_BASE) + "/bridge/poll";
   String body;
   int code = httpGet(pollUrl, body);
   if (code != 200) {
@@ -142,7 +144,7 @@ void loop() {
   String unused;
   int pcode = httpPost(printerBase + "/eSCL/ScanJobs", "text/xml",
                        (uint8_t *)xml.c_str(), xml.length(), unused);
-  String resultUrl = String(API_BASE) + "/bridge/result?token=" + BRIDGE_TOKEN + "&job=" + job;
+  String resultUrl = String(API_BASE) + "/bridge/result?job=" + job;
   if (pcode != 201 && pcode != 200) {
     String err = "scan rejected";
     httpPost(resultUrl + "&error=" + err, "text/plain", NULL, 0, unused);

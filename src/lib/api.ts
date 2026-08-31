@@ -70,10 +70,22 @@ export async function removeEmail(email: string): Promise<string[]> {
 }
 
 export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanResult> {
-  const res = await fetch(url("/api/scan"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source }),
-  })
-  return readJson<ScanResult>(res)
+  const ctrl = new AbortController()
+  const timer = window.setTimeout(() => ctrl.abort(), 180_000)
+  try {
+    const res = await fetch(url("/api/scan"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source }),
+      signal: ctrl.signal,
+    })
+    return await readJson<ScanResult>(res)
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      return { ok: false, stage: "scan_failed", error: "Scan timed out" }
+    }
+    throw error
+  } finally {
+    window.clearTimeout(timer)
+  }
 }

@@ -159,6 +159,9 @@ def printer_base(cfg: dict[str, Any]) -> str:
     return f"http://{host}"
 
 
+_opener = urllib.request.build_opener()
+
+
 def http(
     url: str,
     *,
@@ -169,7 +172,7 @@ def http(
 ) -> tuple[int, dict[str, str], bytes]:
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with _opener.open(req, timeout=timeout) as resp:
             hdrs = {k.lower(): v for k, v in resp.headers.items()}
             return resp.status, hdrs, resp.read()
     except urllib.error.HTTPError as err:

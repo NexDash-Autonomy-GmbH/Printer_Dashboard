@@ -108,7 +108,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }, 0)
     const id = window.setInterval(() => {
       void refresh()
-    }, 10000)
+    }, 3000)
     return () => {
       window.clearTimeout(timeout)
       window.clearInterval(id)

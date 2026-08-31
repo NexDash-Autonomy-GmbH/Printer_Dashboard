@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/hmac"
 	"encoding/json"
 	"io"
 	"log"
@@ -196,8 +197,20 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *server) authorized(r *http.Request) bool {
+	got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	got = strings.TrimSpace(got)
+	if got == "" {
+		got = r.URL.Query().Get("token")
+	}
+	if s.cfg.BridgeToken == "" || got == "" {
+		return false
+	}
+	return hmac.Equal([]byte(got), []byte(s.cfg.BridgeToken))
+}
+
 func (s *server) handlePoll(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("token") != s.cfg.BridgeToken {
+	if !s.authorized(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
@@ -212,13 +225,13 @@ func (s *server) handlePoll(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(25 * time.Millisecond)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"job": ""})
 }
 
 func (s *server) handleResult(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Query().Get("token") != s.cfg.BridgeToken {
+	if !s.authorized(r) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
