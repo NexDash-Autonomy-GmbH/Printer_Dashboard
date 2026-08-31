@@ -99,6 +99,8 @@ Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when b
 
 ### Cloudflare Pages (free)
 
+Live: https://printer-dashboard.pages.dev/
+
 The UI builds to `dist/` and deploys with Wrangler:
 
 ```bash
