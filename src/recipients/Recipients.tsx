@@ -1,6 +1,6 @@
 import { useTransition } from "react"
 import { motion } from "motion/react"
-import { CheckIcon, CircleAlertIcon, ScanLineIcon } from "lucide-react"
+import { CheckIcon, CircleAlertIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -52,17 +52,11 @@ function RecipientsAddForm() {
           spellCheck={false}
           placeholder="name@nexdash.com"
           aria-label="Email"
-          list="nexdash-workspace-emails"
           value={state.draft}
           aria-invalid={state.invalid}
           onChange={(event) => actions.setDraft(event.target.value)}
-          className="h-11 min-w-0 flex-1 rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-11 min-w-0 flex-1 appearance-none rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
-        <datalist id="nexdash-workspace-emails">
-          {state.workspaceEmails.map((email) => (
-            <option key={email} value={email} />
-          ))}
-        </datalist>
         <AnimatedButton type="submit" size="lg" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
           Add
@@ -243,9 +237,7 @@ function RecipientsScan() {
     >
       {pending || state.jobStatus === "scanning" ? (
         <Spinner data-icon="inline-start" />
-      ) : (
-        <ScanLineIcon data-icon="inline-start" aria-hidden="true" />
-      )}
+      ) : null}
       {label}
     </AnimatedButton>
   )
@@ -310,11 +302,17 @@ export function RecipientsDashboard() {
         >
           <div className="flex flex-col gap-2">
             <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">
-              Scan
+              {state.source === "adf" ? "Feeder" : "Glass"}
             </h2>
-            <p className="text-sm text-muted-foreground">
-              This panel talks to the Xerox B305. Feeder takes the stack and builds one PDF. Glass takes a single page. Mail is sent from the address in .env to Recipients, not to the sender.
-            </p>
+            {state.source === "adf" ? (
+              <p className="text-sm text-muted-foreground">
+                Reads the stack in the ADF and merges it into one PDF. Load paper until the header says ADF loaded, then Scan. Mail goes from the sender below to Recipients.
+              </p>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Reads one page from the flatbed. Put the sheet on the glass, then Scan. Mail goes from the sender below to Recipients.
+              </p>
+            )}
             <p className="text-sm text-muted-foreground">
               Sender{" "}
               <span className="font-medium text-foreground" translate="no">
