@@ -32,7 +32,7 @@ export function MacOSSidebar({
           width: isOpen ? 240 : 64,
         }}
         transition={{ type: "spring", bounce: 0.4, duration: 0.8 }}
-        className={`p-2 rounded-2xl shrink-0 flex flex-col items-start transition-colors duration-900 ease-out ${
+        className={`p-2 rounded-2xl shrink-0 flex flex-col items-start ${
           isOpen ? "bg-neutral-100 dark:bg-neutral-800" : "bg-transparent"
         }`}
       >
