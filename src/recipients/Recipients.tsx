@@ -145,8 +145,8 @@ export function RecipientsDashboard() {
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col bg-background">
-      <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-xl items-center justify-between gap-4 px-4 py-4 sm:px-6">
+      <header className="glass-header sticky top-0 border-b border-white/20 dark:border-white/10">
+        <div className="mx-auto flex h-16 w-full max-w-xl items-center justify-between gap-4 px-6">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight">Xerox B305</h1>
             <div className="mt-1 flex flex-wrap items-center gap-4">
@@ -191,7 +191,7 @@ export function RecipientsDashboard() {
             transform: "perspective(500px) rotateX(0deg) scale(1)",
           }}
           transition={{ type: "spring", stiffness: 150, damping: 25 }}
-          className="bg-background grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg border p-6 shadow-lg sm:max-w-lg"
+          className="squircle bg-background grid w-full max-w-[calc(100%-2rem)] gap-4 border p-6 shadow-lg sm:max-w-lg"
         >
           <div className="flex flex-col gap-1">
             <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">

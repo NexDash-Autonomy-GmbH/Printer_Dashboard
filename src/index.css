@@ -197,6 +197,17 @@
   }
 }
 
+.squircle {
+  border-radius: 2.25rem;
+  corner-shape: squircle;
+}
+
+.glass-header {
+  background: color-mix(in oklab, var(--background) 55%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+}
+
 .recipient-row {
   animation: recipient-enter 180ms var(--ease-out) both;
   animation-delay: var(--enter-delay, 0ms);
