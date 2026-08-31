@@ -81,6 +81,21 @@ Recipient list is stored in `~/.config/xerox-scan/config.json`. SMTP settings co
 
 Vite + React + TypeScript + Tailwind + shadcn. Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally.
 
+## Transport: long-poll on the chip, SSE in the browser
+
+We compared WebSocket, SSE, and HTTPS long-poll for this stack (ESP8266EX, BearSSL, PDF upload, Cloudflare/ngrok in front).
+
+| Link | Protocol | Why |
+|---|---|---|
+| ESP8266 → API | **HTTPS long-poll + POST** | Job notify is rare (one scan at a time). The PDF is **device → server**; SSE cannot carry that. WebSocket + TLS on this chip is a RAM risk (firmware already uses ~91% IRAM). Long-poll is ordinary HTTP, survives proxies, and we tested it. |
+| Browser → API | **REST + SSE for status** | The UI only needs server→browser updates (scanning / sent / failed). SSE is HTTP, auto-reconnects, and is the right default when traffic is one-way. WebSocket would add a duplex channel we do not use. |
+
+Speed: a scan takes seconds to minutes on the Xerox. A 20s poll interval is small next to that. PDF upload is the same HTTPS POST either way.
+
+Security: HTTPS only. Bridge token on the device. Do not put the token in query strings on a public URL if you can send `Authorization` instead. Pages.dev cannot talk to `192.168.68.52` directly (browser Private Network Access).
+
+Tests: `go test ./internal/realtime ./internal/bridge ./cmd/api`.
+
 ## Cloud UI + ESP32 (Go)
 
 The webpage can live on GitHub Pages. The Xerox cannot. An ESP32 (firmware in Go) stays on the office Wi-Fi, polls the API, scans, and posts the PDF back.
