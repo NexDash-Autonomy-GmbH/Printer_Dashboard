@@ -27,6 +27,11 @@ func main() {
 		log.Fatal(err)
 	}
 	s := &server{cfg: cfg, hub: bridge.New()}
+	log.Printf("api %s  printer %s  sender %s", cfg.Listen, cfg.PrinterHost, cfg.SMTP.FromEmail)
+	log.Fatal(http.ListenAndServe(cfg.Listen, s.routes()))
+}
+
+func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/state", s.handleState)
 	mux.HandleFunc("/api/emails", s.handleEmails)
@@ -34,8 +39,7 @@ func main() {
 	mux.HandleFunc("/bridge/poll", s.handlePoll)
 	mux.HandleFunc("/bridge/result", s.handleResult)
 	mux.Handle("/", spa("."))
-	log.Printf("api %s  printer %s  sender %s", cfg.Listen, cfg.PrinterHost, cfg.SMTP.FromEmail)
-	log.Fatal(http.ListenAndServe(cfg.Listen, withCORS(mux)))
+	return withCORS(mux)
 }
 
 func (s *server) handleState(w http.ResponseWriter, r *http.Request) {
@@ -162,6 +166,10 @@ func (s *server) handleScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := "scan_" + time.Now().Format("2006-01-02_15-04-05") + ".pdf"
+	if err := os.MkdirAll(s.cfg.ScanDir, 0o755); err != nil {
+		writeJSON(w, http.StatusOK, fail("scan_failed", err.Error()))
+		return
+	}
 	path := filepath.Join(s.cfg.ScanDir, name)
 	if err := os.WriteFile(path, pdf, 0o644); err != nil {
 		writeJSON(w, http.StatusOK, fail("scan_failed", err.Error()))

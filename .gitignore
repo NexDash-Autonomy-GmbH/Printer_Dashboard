@@ -2,6 +2,7 @@
 .env
 .env.local
 esp32/wifi.go
+esp8266/bridge/secrets.h
 bin/
 !.env.example
 !.env_example
