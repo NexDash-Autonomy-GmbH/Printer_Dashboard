@@ -79,7 +79,7 @@ Recipient list is stored in `~/.config/xerox-scan/config.json`. SMTP settings co
 
 ## Layout
 
-Vite + React + TypeScript + Tailwind + shadcn. Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally.
+Vite + React + TypeScript + Tailwind + shadcn, with beUI motion components for the desk chrome (sidebar, badges, scan button, theme wipe). Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally. Visual rules live in `DESIGN.md`.
 
 ## Transport: long-poll on the chip, SSE in the browser
 

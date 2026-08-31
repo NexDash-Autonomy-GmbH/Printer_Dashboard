@@ -1,10 +1,15 @@
 import { SidebarLeftIcon } from "@hugeicons/core-free-icons"
-import { HugeiconsIcon } from "@hugeicons/react"
-import { motion, AnimatePresence } from "motion/react"
+import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react"
+import { motion, AnimatePresence, useReducedMotion } from "motion/react"
 import { useState, type ReactNode } from "react"
 
+export interface MacOSSidebarItem {
+  label: string
+  icon: IconSvgElement
+}
+
 export interface MacOSSidebarProps {
-  items: string[]
+  items: MacOSSidebarItem[]
   defaultOpen?: boolean
   initialSelectedIndex?: number
   children?: ReactNode
@@ -23,6 +28,7 @@ export function MacOSSidebar({
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
   const [selectedIndex, setSelectedIndex] = useState<number>(initialSelectedIndex)
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen)
+  const reduce = useReducedMotion()
 
   return (
     <div
@@ -32,7 +38,7 @@ export function MacOSSidebar({
         animate={{
           width: isOpen ? 240 : 64,
         }}
-        transition={{ type: "spring", bounce: 0.4, duration: 0.8 }}
+        transition={reduce ? { duration: 0 } : { type: "spring", bounce: 0.4, duration: 0.8 }}
         className={`flex shrink-0 flex-col items-start rounded-lg p-2 ${
           isOpen ? "bg-background" : "bg-transparent"
         }`}
@@ -42,79 +48,91 @@ export function MacOSSidebar({
             isOpen ? "justify-end" : "justify-center"
           } text-muted-foreground shrink-0 p-2`}
         >
-          <motion.div
-            layout
-            className="flex shrink-0 items-center justify-center"
-          >
-            <HugeiconsIcon
-              icon={SidebarLeftIcon}
-              className="size-5 cursor-pointer"
+          <motion.div layout className="flex shrink-0 items-center justify-center">
+            <button
+              type="button"
+              aria-expanded={isOpen}
+              aria-label={isOpen ? "Collapse sidebar" : "Expand sidebar"}
+              className="focus-visible:ring-ring/50 grid place-items-center rounded-md outline-none focus-visible:ring-3"
               onClick={() => setIsOpen(!isOpen)}
-            />
+            >
+              <HugeiconsIcon icon={SidebarLeftIcon} className="size-5 cursor-pointer" aria-hidden />
+            </button>
           </motion.div>
         </div>
 
-        <AnimatePresence>
-          {isOpen && (
-            <motion.div
-              initial={{ opacity: 0, filter: "blur(4px)" }}
-              animate={{ opacity: 1, filter: "blur(0px)" }}
-              exit={{ opacity: 0, filter: "blur(4px)" }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="relative z-10 mt-4 flex w-full flex-col gap-2 whitespace-nowrap"
-              onMouseLeave={() => setHoveredIndex(null)}
+        <nav
+          aria-label="Sections"
+          className="relative z-10 mt-4 flex w-full flex-col gap-2 whitespace-nowrap"
+          onMouseLeave={() => setHoveredIndex(null)}
+        >
+          {items.map((item, index) => (
+            <button
+              key={item.label}
+              type="button"
+              aria-current={selectedIndex === index ? "page" : undefined}
+              aria-label={isOpen ? undefined : item.label}
+              title={isOpen ? undefined : item.label}
+              className={`focus-visible:ring-ring/50 relative flex w-full cursor-pointer items-center rounded-lg py-3 outline-none focus-visible:ring-3 ${
+                isOpen ? "gap-3 px-5" : "justify-center px-0"
+              }`}
+              onMouseEnter={() => setHoveredIndex(index)}
+              onFocus={() => setHoveredIndex(index)}
+              onClick={() => {
+                setSelectedIndex(index)
+                onSelect?.(index)
+              }}
             >
-              {items.map((item, index) => (
-                <div
-                  key={item}
-                  className="relative cursor-pointer"
-                  onMouseEnter={() => setHoveredIndex(index)}
-                  onClick={() => {
-                    setSelectedIndex(index)
-                    onSelect?.(index)
-                  }}
-                >
-                  <AnimatePresence>
-                    {selectedIndex === index && (
-                      <motion.div
-                        className="bg-accent absolute inset-0 z-0 rounded-lg"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                      />
-                    )}
-                  </AnimatePresence>
-                  <p
-                    className={`relative z-10 px-5 py-3 tracking-tight ${
+              <AnimatePresence>
+                {selectedIndex === index && (
+                  <motion.span
+                    className="bg-accent absolute inset-0 z-0 rounded-lg"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={{ duration: reduce ? 0 : 0.2, ease: "easeOut" }}
+                  />
+                )}
+              </AnimatePresence>
+              <AnimatePresence>
+                {hoveredIndex === index && selectedIndex !== index && (
+                  <motion.span
+                    layoutId="sidebar-hover-bg"
+                    className="bg-accent/50 absolute inset-0 z-0 rounded-lg"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    transition={reduce ? { duration: 0 } : { type: "spring", stiffness: 350, damping: 30 }}
+                  />
+                )}
+              </AnimatePresence>
+              <HugeiconsIcon
+                icon={item.icon}
+                className={`relative z-10 size-5 shrink-0 ${
+                  selectedIndex === index ? "text-foreground" : "text-muted-foreground"
+                }`}
+                aria-hidden
+              />
+              <AnimatePresence initial={false}>
+                {isOpen && (
+                  <motion.span
+                    initial={reduce ? false : { opacity: 0, filter: "blur(4px)" }}
+                    animate={{ opacity: 1, filter: "blur(0px)" }}
+                    exit={reduce ? { opacity: 0 } : { opacity: 0, filter: "blur(4px)" }}
+                    transition={{ duration: reduce ? 0 : 0.2, ease: "easeOut" }}
+                    className={`relative z-10 truncate tracking-tight ${
                       selectedIndex === index
                         ? "text-foreground font-medium"
                         : "text-muted-foreground"
                     }`}
                   >
-                    {item}
-                  </p>
-                  <AnimatePresence>
-                    {hoveredIndex === index && selectedIndex !== index && (
-                      <motion.span
-                        layoutId="sidebar-hover-bg"
-                        className="bg-accent/50 absolute inset-0 z-0 rounded-lg"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        transition={{
-                          type: "spring",
-                          stiffness: 350,
-                          damping: 30,
-                        }}
-                      />
-                    )}
-                  </AnimatePresence>
-                </div>
-              ))}
-            </motion.div>
-          )}
-        </AnimatePresence>
+                    {item.label}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+            </button>
+          ))}
+        </nav>
       </motion.div>
 
       <div className="z-0 h-full min-h-full w-full flex-1 overflow-y-auto pl-4 lg:pl-8">

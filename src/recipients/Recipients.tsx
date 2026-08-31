@@ -3,8 +3,22 @@ import { CheckIcon, CircleAlertIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  Empty,
+  EmptyDescription,
+  EmptyHeader,
+  EmptyTitle,
+} from "@/components/ui/empty"
 import { AnimatedButton } from "@/components/ui/animated-button"
-import { MacOSSidebar } from "@/components/ui/original"
+import {
+  DashboardSquare01Icon,
+  DropletIcon,
+  ListViewIcon,
+  Mail01Icon,
+  ScanIcon,
+} from "@hugeicons/core-free-icons"
+
+import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
@@ -23,6 +37,11 @@ function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
 
 function printerDown(scanner: string): boolean {
   return scannerState(scanner) === "down"
+}
+
+// The printer reports scanner state lowercase ("unreachable"); these render as labels.
+function capitalize(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value
 }
 
 function adfView(
@@ -53,16 +72,21 @@ function formatWhen(at: number): string {
   }).format(new Date(at))
 }
 
+// One or two letters matched most of the workspace, so the list opened almost immediately.
+const MIN_SUGGEST_CHARS = 3
+
 function RecipientsAddForm() {
   const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
   const draft = state.draft.trim().toLowerCase()
-  const suggestions = state.workspaceEmails.filter((email) => {
-    if (!draft) return false
-    if (state.emails.includes(email)) return false
-    const local = email.split("@")[0] || ""
-    return email.includes(draft) || local.startsWith(draft)
-  })
+  const suggestions =
+    draft.length < MIN_SUGGEST_CHARS
+      ? []
+      : state.workspaceEmails.filter((email) => {
+          if (state.emails.includes(email)) return false
+          const local = email.split("@")[0] || ""
+          return email.includes(draft) || local.startsWith(draft)
+        })
 
   return (
     <form
@@ -154,7 +178,7 @@ function RecipientsList() {
   }
 
   if (state.emails.length === 0) {
-    return <p className="text-sm text-muted-foreground">No recipients. Scan still saves a PDF.</p>
+    return <EmptyState title="No recipients" description="A scan still saves the PDF to the office box. Add an address to have it mailed." />
   }
 
   return (
@@ -265,6 +289,54 @@ function RecipientsScan() {
   )
 }
 
+function StatCard({
+  label,
+  value,
+  hint,
+}: {
+  label: string
+  value: string
+  hint: string
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card px-5 py-4">
+      <p className="text-xs tracking-wide text-muted-foreground uppercase">{label}</p>
+      <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
+      <p className="mt-2 text-xs text-muted-foreground">{hint}</p>
+    </div>
+  )
+}
+
+function FieldBox({
+  label,
+  value,
+  mono,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+}) {
+  return (
+    <div className="rounded-lg border border-border bg-muted/40 px-4 py-3">
+      <p className="text-xs tracking-wide text-muted-foreground uppercase">{label}</p>
+      <p className={`mt-1 text-sm ${mono ? "font-mono" : ""}`} translate="no">
+        {value}
+      </p>
+    </div>
+  )
+}
+
+function EmptyState({ title, description }: { title: string; description: string }) {
+  return (
+    <Empty className="border-border bg-card/40 min-h-80 flex-1 rounded-2xl border">
+      <EmptyHeader>
+        <EmptyTitle>{title}</EmptyTitle>
+        <EmptyDescription>{description}</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  )
+}
+
 function OverviewView() {
   const { state } = useRecipients()
   const adf = adfView(state.scanner, state.adf)
@@ -272,46 +344,67 @@ function OverviewView() {
   const last = state.scans[0]
 
   return (
-    <article className="overflow-hidden rounded-xl border border-border bg-card">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
-          <h2 className="text-base font-semibold">Xerox B305</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{state.model}</p>
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <StatCard
+          label="Bridge"
+          value={state.bridgeOnline ? "Online" : "Offline"}
+          hint="ESP8266 on NexDash Wi-Fi"
+        />
+        <StatCard
+          label="Recipients"
+          value={String(state.emails.length)}
+          hint="Empty list means no mail"
+        />
+        <StatCard
+          label="Last scan"
+          value={last ? last.stage : "None"}
+          hint={last ? formatWhen(last.at) : "Nothing yet"}
+        />
+      </div>
+
+      <article className="overflow-hidden rounded-xl border border-border bg-card">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold">Xerox B305</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              NexDash office · {state.model}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusIndicator
+              size="sm"
+              state={online ? "active" : "down"}
+              label={online ? "Online" : "Offline"}
+            />
+            <StatusIndicator
+              size="sm"
+              state={scannerState(state.scanner)}
+              label={capitalize(state.scanner)}
+            />
+            <StatusIndicator size="sm" state={adf.state} label={adf.label} />
+          </div>
+        </header>
+
+        <div className="grid gap-3 p-5 sm:grid-cols-2">
+          <FieldBox label="Host" value={state.printerHost || "192.168.68.52"} mono />
+          <FieldBox label="Sender" value={state.fromEmail || "—"} />
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StatusIndicator size="sm" state={online ? "active" : "down"} label={online ? "online" : "offline"} />
-          <StatusIndicator size="sm" state={scannerState(state.scanner)} label={state.scanner} />
-          <StatusIndicator size="sm" state={adf.state} label={adf.label} />
-        </div>
-      </header>
-      <dl className="grid gap-x-8 gap-y-3 p-5 sm:grid-cols-[8rem_1fr]">
-        <dt className="text-sm text-muted-foreground">Host</dt>
-        <dd className="font-mono text-sm" translate="no">
-          {state.printerHost || "192.168.68.52"}
-        </dd>
-        <dt className="text-sm text-muted-foreground">Sender</dt>
-        <dd className="text-sm" translate="no">
-          {state.fromEmail || "—"}
-        </dd>
-        <dt className="text-sm text-muted-foreground">Recipients</dt>
-        <dd className="text-sm">{state.emails.length}</dd>
-        <dt className="text-sm text-muted-foreground">Last scan</dt>
-        <dd className="text-sm">{last ? `${last.stage} · ${formatWhen(last.at)}` : "—"}</dd>
-        {state.supplies?.pages != null ? (
-          <>
-            <dt className="text-sm text-muted-foreground">Pages</dt>
-            <dd className="text-sm">{state.supplies.pages}</dd>
-          </>
+
+        {state.supplies?.toners.length ? (
+          <div className="flex flex-col gap-3 border-t border-border px-5 py-4">
+            {state.supplies.toners.map((row) => (
+              <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
+            ))}
+          </div>
         ) : null}
-      </dl>
-      {state.supplies?.toners.length ? (
-        <div className="flex flex-col gap-3 border-t border-border px-5 py-4">
-          {state.supplies.toners.map((row) => (
-            <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
-          ))}
-        </div>
-      ) : null}
-    </article>
+
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
+          <span>eSCL scan · PDF mail</span>
+          <span>SNMP when the office box can reach the Xerox</span>
+        </footer>
+      </article>
+    </div>
   )
 }
 
@@ -334,7 +427,7 @@ function SuppliesView() {
   const { state } = useRecipients()
   const supplies = state.supplies
   if (!supplies || (!supplies.online && supplies.toners.length === 0)) {
-    return <p className="text-sm text-muted-foreground">No SNMP from the printer.</p>
+    return <EmptyState title="No SNMP reading" description="Supplies appear once the office box can reach the Xerox." />
   }
   return (
     <div className="flex max-w-xl flex-col gap-6">
@@ -352,13 +445,13 @@ function SuppliesView() {
         <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs">{supplies.console}</p>
       ) : null}
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold">Supplies</h3>
+        <h2 className="text-sm font-semibold">Supplies</h2>
         {supplies.toners.map((row) => (
           <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
         ))}
       </section>
       <section className="flex flex-col gap-3">
-        <h3 className="text-sm font-semibold">Trays</h3>
+        <h2 className="text-sm font-semibold">Trays</h2>
         {supplies.trays.map((row) => (
           <SupplyRow
             key={row.name}
@@ -370,7 +463,7 @@ function SuppliesView() {
       </section>
       {supplies.alerts.length ? (
         <section className="flex flex-col gap-2">
-          <h3 className="text-sm font-semibold">Alerts</h3>
+          <h2 className="text-sm font-semibold">Alerts</h2>
           {supplies.alerts.map((alert) => (
             <p key={alert.desc} className="rounded-lg border border-border px-3 py-2 text-sm">
               {alert.severity}: {alert.desc}
@@ -414,10 +507,6 @@ function ScanView() {
 function RecipientsView() {
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-4">
-      <div>
-        <h2 className="text-lg font-semibold">Recipients</h2>
-        <p className="mt-1 text-sm text-muted-foreground">Addresses that get the PDF.</p>
-      </div>
       <RecipientsAddForm />
       <RecipientsList />
     </div>
@@ -427,7 +516,7 @@ function RecipientsView() {
 function JobsView() {
   const { state } = useRecipients()
   if (state.scans.length === 0) {
-    return <p className="text-sm text-muted-foreground">No scans.</p>
+    return <EmptyState title="No scans yet" description="Scans you run from the Scan tab are listed here." />
   }
   return (
     <div className="overflow-x-auto rounded-xl border border-border bg-card">
@@ -466,7 +555,7 @@ function viewTitle(view: View): string {
     case "recipients":
       return "Recipients"
     case "jobs":
-      return "Jobs"
+      return "Scan jobs"
     case "supplies":
       return "Supplies"
     default: {
@@ -476,18 +565,44 @@ function viewTitle(view: View): string {
   }
 }
 
-const NAV_ITEMS = ["Overview", "Supplies", "Scan", "Recipients", "Jobs"] as const
+function viewSubtitle(view: View): string {
+  switch (view) {
+    case "overview":
+      return "Xerox B305 at the office"
+    case "scan":
+      return "Scan from the glass or the feeder."
+    case "recipients":
+      return "Addresses that get the PDF."
+    case "jobs":
+      return "Scans this desk has run."
+    case "supplies":
+      return "Toner, trays and alerts over SNMP."
+    default: {
+      const _never: never = view
+      return _never
+    }
+  }
+}
+
+const NAV_ITEMS: MacOSSidebarItem[] = [
+  { label: "Overview", icon: DashboardSquare01Icon },
+  { label: "Supplies", icon: DropletIcon },
+  { label: "Scan", icon: ScanIcon },
+  { label: "Recipients", icon: Mail01Icon },
+  { label: "Scan jobs", icon: ListViewIcon },
+]
 const NAV_VIEWS: View[] = ["overview", "supplies", "scan", "recipients", "jobs"]
 
 export function RecipientsDashboard() {
   const { actions } = useRecipients()
   const [view, setView] = useState<View>("overview")
   const title = viewTitle(view)
+  const subtitle = viewSubtitle(view)
 
   return (
     <div className="min-h-dvh bg-background p-3">
       <MacOSSidebar
-        items={[...NAV_ITEMS]}
+        items={NAV_ITEMS}
         className="min-h-[calc(100dvh-1.5rem)] w-full max-w-none rounded-2xl shadow-none"
         onSelect={(index) => {
           const next = NAV_VIEWS[index]
@@ -497,12 +612,24 @@ export function RecipientsDashboard() {
         }}
       >
         <div className="flex min-h-full flex-col py-3 pr-3">
-          <header className="mb-6 flex items-center justify-between gap-3">
-            <div className="min-w-0">
-              <h1 className="text-base font-semibold">{title}</h1>
-            </div>
-            <div className="flex items-center gap-2">
-              <AnimatedButton type="button" variant="outline" size="sm" onClick={() => void actions.refresh()}>
+          <header className="mb-6 flex flex-col gap-4">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+              <div className="flex min-w-0 items-center gap-4">
+                <div
+                  aria-hidden="true"
+                  className="min-h-8 w-1 self-stretch rounded-full bg-gradient-to-b from-primary via-primary/50 to-transparent sm:min-h-10 sm:w-1.5"
+                />
+                <div className="min-w-0">
+                  <h1 className="text-foreground text-xl font-bold tracking-tight text-balance sm:text-3xl lg:text-4xl">
+                    {title}
+                  </h1>
+                  <p className="text-muted-foreground mt-1 text-xs font-medium sm:text-sm">
+                    {subtitle}
+                  </p>
+                </div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2">
+              <AnimatedButton type="button" variant="outline" onClick={() => void actions.refresh()}>
                 Refresh
               </AnimatedButton>
               <SwitchMode
@@ -515,9 +642,11 @@ export function RecipientsDashboard() {
                 borderDarkColor="#444"
                 borderLightColor="#DDD"
               />
+              </div>
             </div>
+            <hr aria-hidden="true" className="border-border" />
           </header>
-          <div className="flex-1">
+          <div className="flex min-h-0 flex-1 flex-col">
             {view === "overview" ? <OverviewView /> : null}
             {view === "scan" ? <ScanView /> : null}
             {view === "recipients" ? <RecipientsView /> : null}

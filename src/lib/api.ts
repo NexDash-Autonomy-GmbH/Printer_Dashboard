@@ -48,10 +48,23 @@ export type ScanResult = {
   log?: string[]
 }
 
-const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ?? ""
+const PRODUCTION_API = "https://printer-api.nexdash.workers.dev"
+
+function apiBase(): string {
+  const raw = (import.meta.env.VITE_API_BASE as string | undefined)?.trim().replace(/\/$/, "") ?? ""
+  if (raw) return raw
+  if (import.meta.env.PROD) return PRODUCTION_API
+  return ""
+}
 
 function url(path: string): string {
-  return `${API_BASE}${path}`
+  return `${apiBase()}${path}`
+}
+
+const UNREACHABLE = "Printer unreachable"
+
+function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError"
 }
 
 async function request(path: string, init: RequestInit = {}, ms = 8000): Promise<Response> {
@@ -65,50 +78,73 @@ async function request(path: string, init: RequestInit = {}, ms = 8000): Promise
 }
 
 async function readJson<T>(res: Response): Promise<T> {
-  return (await res.json()) as T
+  const text = await res.text()
+  const type = res.headers.get("content-type") || ""
+  if (!type.includes("json")) {
+    throw new Error(UNREACHABLE)
+  }
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(UNREACHABLE)
+  }
 }
 
 export async function fetchState(): Promise<PrinterState> {
   try {
     const res = await request("/api/state", {}, 4000)
     if (!res.ok) {
-      throw new Error(`Could not load printer state (${res.status})`)
+      throw new Error(UNREACHABLE)
     }
     return readJson<PrinterState>(res)
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error("Printer did not respond")
+    if (isAbort(error)) {
+      throw new Error("Printer did not respond", { cause: error })
     }
-    throw error
+    throw new Error(UNREACHABLE, { cause: error })
   }
 }
 
 export async function addEmail(email: string): Promise<string[]> {
-  const res = await request("/api/emails", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  })
-  const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
-    res
-  )
-  if (!res.ok || !data.ok) {
-    throw new Error(data.error || "Could not add address")
+  try {
+    const res = await request("/api/emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email }),
+    })
+    const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
+      res
+    )
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Could not add address")
+    }
+    return data.emails ?? []
+  } catch (error) {
+    if (error instanceof Error && error.message && error.message !== UNREACHABLE) {
+      throw new Error(error.message, { cause: error })
+    }
+    throw new Error("Could not add address", { cause: error })
   }
-  return data.emails ?? []
 }
 
 export async function removeEmail(email: string): Promise<string[]> {
-  const res = await request(`/api/emails?email=${encodeURIComponent(email)}`, {
-    method: "DELETE",
-  })
-  const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
-    res
-  )
-  if (!res.ok || !data.ok) {
-    throw new Error(data.error || "Could not remove address")
+  try {
+    const res = await request(`/api/emails?email=${encodeURIComponent(email)}`, {
+      method: "DELETE",
+    })
+    const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
+      res
+    )
+    if (!res.ok || !data.ok) {
+      throw new Error(data.error || "Could not remove address")
+    }
+    return data.emails ?? []
+  } catch (error) {
+    if (error instanceof Error && error.message && error.message !== UNREACHABLE) {
+      throw new Error(error.message, { cause: error })
+    }
+    throw new Error("Could not remove address", { cause: error })
   }
-  return data.emails ?? []
 }
 
 export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanResult> {
@@ -124,9 +160,9 @@ export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanRe
     )
     return await readJson<ScanResult>(res)
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
+    if (isAbort(error)) {
       return { ok: false, stage: "scan_failed", error: "Scan timed out" }
     }
-    throw error
+    return { ok: false, stage: "scan_failed", error: UNREACHABLE }
   }
 }
