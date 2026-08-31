@@ -81,6 +81,14 @@ Recipient list is stored in `~/.config/xerox-scan/config.json`. SMTP settings co
 
 Vite + React + TypeScript + Tailwind + shadcn. Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally.
 
+## Back at the office
+
+Printer IP stays `192.168.68.52` in `.env`. Join the NexDash Wi-Fi. On this Mac open http://127.0.0.1:8765/. Other people on that Wi-Fi use `http://<this-mac-lan-ip>:8765/`.
+
+`./deploy/install-launchd.sh` starts the dashboard at login and restarts it if it dies. No extra setup when you walk in.
+
+The ESP32 is not part of this path. It cannot see the Xerox unless it is left on the office Wi-Fi, and it cannot carry a full scan PDF.
+
 ## Production workaround
 
 The Xerox is on the office LAN (`192.168.68.52`). ECS, Netlify, and Vercel cannot scan it. The process that talks eSCL has to sit on a machine that can ping that printer.

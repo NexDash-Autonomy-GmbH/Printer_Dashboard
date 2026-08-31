@@ -550,7 +550,7 @@ def _lan_ip() -> str:
         sock.close()
 
 
-def cmd_dash(cfg: dict[str, Any], port: int) -> int:
+def cmd_dash(cfg: dict[str, Any], port: int, open_browser: bool = True) -> int:
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
     import mimetypes
     import urllib.parse
@@ -710,7 +710,8 @@ def cmd_dash(cfg: dict[str, Any], port: int) -> int:
     print(f"dashboard  http://127.0.0.1:{listen_port}/")
     if lan_ip:
         print(f"on the LAN http://{lan_ip}:{listen_port}/")
-    webbrowser.open(f"http://127.0.0.1:{listen_port}/")
+    if open_browser:
+        webbrowser.open(f"http://127.0.0.1:{listen_port}/")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -737,6 +738,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan_p.add_argument("--dry-run-mail", action="store_true")
     dash_p = sub.add_parser("dash", help="open the dashboard")
     dash_p.add_argument("--port", type=int, default=8765)
+    dash_p.add_argument("--no-browser", action="store_true")
     return parser
 
 
@@ -754,7 +756,7 @@ def main() -> int:
     if args.cmd == "scan":
         return cmd_scan(cfg, args)
     if args.cmd == "dash":
-        return cmd_dash(cfg, args.port)
+        return cmd_dash(cfg, args.port, open_browser=not args.no_browser)
     raise AssertionError(args.cmd)
 
 
