@@ -81,6 +81,24 @@ Recipient list is stored in `~/.config/xerox-scan/config.json`. SMTP settings co
 
 Vite + React + TypeScript + Tailwind + shadcn. Instrument Sans (400/500/600/700) plus Instrument Sans Fallback, bundled locally.
 
+## Cloud UI + ESP32 (Go)
+
+The webpage can live on GitHub Pages. The Xerox cannot. An ESP32 (firmware in Go) stays on the office Wi-Fi, polls the API, scans, and posts the PDF back.
+
+```
+Browser (anywhere) → GitHub Pages UI → Go API
+ESP32 on NexDash Wi-Fi → Xerox 192.168.68.52
+ESP32 → Go API (outbound HTTPS)
+```
+
+```bash
+go run ./cmd/api          # API on :8780, also serves dist/
+```
+
+Set `VITE_API_BASE` to that API’s public URL (ngrok, Cloudflare Tunnel) when building the UI. GitHub Actions reads `secrets.VITE_API_BASE`.
+
+Flash the ESP32 from `esp32/README.md`. Until TinyGo is installed, run `go run ./cmd/office-agent` on a machine that can ping the printer.
+
 ## Back at the office
 
 Printer IP stays `192.168.68.52` in `.env`. Join the NexDash Wi-Fi. On this Mac open http://127.0.0.1:8765/. Other people on that Wi-Fi use `http://<this-mac-lan-ip>:8765/`.

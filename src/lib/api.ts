@@ -23,12 +23,18 @@ export type ScanResult = {
   log?: string[]
 }
 
+const API_BASE = (import.meta.env.VITE_API_BASE as string | undefined)?.replace(/\/$/, "") ?? ""
+
+function url(path: string): string {
+  return `${API_BASE}${path}`
+}
+
 async function readJson<T>(res: Response): Promise<T> {
   return (await res.json()) as T
 }
 
 export async function fetchState(): Promise<PrinterState> {
-  const res = await fetch("/api/state")
+  const res = await fetch(url("/api/state"))
   if (!res.ok) {
     throw new Error(`Could not load printer state (${res.status})`)
   }
@@ -36,7 +42,7 @@ export async function fetchState(): Promise<PrinterState> {
 }
 
 export async function addEmail(email: string): Promise<string[]> {
-  const res = await fetch("/api/emails", {
+  const res = await fetch(url("/api/emails"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
@@ -51,7 +57,7 @@ export async function addEmail(email: string): Promise<string[]> {
 }
 
 export async function removeEmail(email: string): Promise<string[]> {
-  const res = await fetch(`/api/emails?email=${encodeURIComponent(email)}`, {
+  const res = await fetch(url(`/api/emails?email=${encodeURIComponent(email)}`), {
     method: "DELETE",
   })
   const data = await readJson<{ ok: boolean; emails?: string[]; error?: string }>(
@@ -64,7 +70,7 @@ export async function removeEmail(email: string): Promise<string[]> {
 }
 
 export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanResult> {
-  const res = await fetch("/api/scan", {
+  const res = await fetch(url("/api/scan"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ source }),

@@ -1,6 +1,8 @@
 # secrets
 .env
 .env.local
+esp32/wifi.go
+bin/
 !.env.example
 !.env_example
 *.pem
