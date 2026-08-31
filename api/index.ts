@@ -23,6 +23,28 @@ type Job = {
 
 type ScanResult = { pdf?: Uint8Array; error?: string };
 
+type ScanLog = {
+  at: number;
+  name: string;
+  stage: string;
+  recipients: string[];
+  error?: string;
+};
+
+type Supplies = {
+  online: boolean;
+  status: string;
+  model?: string;
+  serial?: string;
+  pages?: number | null;
+  uptime_ticks?: number;
+  console?: string;
+  toners: Array<{ name: string; pct: number | null; color: string }>;
+  trays: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>;
+  alerts: Array<{ severity: string; desc: string }>;
+  checked_at: number;
+};
+
 const WORKSPACE = [
   "alwin@nexdash.com",
   "parth@nexdash.com",
@@ -125,6 +147,8 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handlePoll(request);
       case "/bridge/result":
         return this.handleResult(request);
+      case "/bridge/telemetry":
+        return this.handleTelemetry(request);
       default:
         return json(request, this.env, 404, { ok: false, error: "not found" });
     }
@@ -150,7 +174,22 @@ export class PrinterApi extends DurableObject<Env> {
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
       bridge_online: online,
+      scans: await this.scanLog(),
+      supplies: await this.supplies(),
     });
+  }
+
+  private async supplies(): Promise<Supplies | null> {
+    return (await this.ctx.storage.get<Supplies>("supplies")) ?? null;
+  }
+
+  private async scanLog(): Promise<ScanLog[]> {
+    return (await this.ctx.storage.get<ScanLog[]>("scans")) ?? [];
+  }
+
+  private async recordScan(entry: ScanLog): Promise<void> {
+    const next = [entry, ...(await this.scanLog())].slice(0, 20);
+    await this.ctx.storage.put("scans", next);
   }
 
   private async handleEmails(request: Request): Promise<Response> {
@@ -227,16 +266,25 @@ export class PrinterApi extends DurableObject<Env> {
       this.wakePoll();
     });
     if (result.error || !result.pdf) {
+      const error = result.error || "empty scan";
+      await this.recordScan({
+        at: Date.now(),
+        name: "",
+        stage: "scan_failed",
+        recipients,
+        error,
+      });
       return json(request, this.env, 200, {
         ok: false,
         stage: "scan_failed",
         scanned: false,
         emailed: false,
-        error: result.error || "empty scan",
+        error,
       });
     }
     const name = `scan_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
     if (recipients.length === 0) {
+      await this.recordScan({ at: Date.now(), name, stage: "saved", recipients });
       return json(request, this.env, 200, {
         ok: true,
         stage: "saved",
@@ -263,6 +311,7 @@ export class PrinterApi extends DurableObject<Env> {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "mail failed";
+      await this.recordScan({ at: Date.now(), name, stage: "mail_failed", recipients, error: message });
       return json(request, this.env, 200, {
         ok: false,
         stage: "mail_failed",
@@ -272,6 +321,7 @@ export class PrinterApi extends DurableObject<Env> {
         files: [name],
       });
     }
+    await this.recordScan({ at: Date.now(), name, stage: "sent", recipients });
     return json(request, this.env, 200, {
       ok: true,
       stage: "sent",
@@ -332,6 +382,35 @@ export class PrinterApi extends DurableObject<Env> {
       }
       job.resolve(errMsg ? { error: errMsg } : { pdf: buf });
     }
+    return json(request, this.env, 200, { ok: true });
+  }
+
+  private async handleTelemetry(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    if (request.method !== "POST") {
+      return json(request, this.env, 405, { ok: false, error: "method not allowed" });
+    }
+    this.lastSeen = Date.now();
+    const body = (await request.json().catch(() => null)) as Supplies | null;
+    if (!body || !Array.isArray(body.toners) || !Array.isArray(body.trays)) {
+      return json(request, this.env, 400, { ok: false, error: "bad telemetry" });
+    }
+    const supplies: Supplies = {
+      online: Boolean(body.online),
+      status: String(body.status || "Unknown"),
+      model: body.model,
+      serial: body.serial,
+      pages: body.pages ?? null,
+      uptime_ticks: body.uptime_ticks,
+      console: body.console,
+      toners: body.toners.slice(0, 16),
+      trays: body.trays.slice(0, 16),
+      alerts: (body.alerts || []).slice(0, 32),
+      checked_at: Number(body.checked_at) || Date.now() / 1000,
+    };
+    await this.ctx.storage.put("supplies", supplies);
     return json(request, this.env, 200, { ok: true });
   }
 

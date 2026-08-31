@@ -98,6 +98,9 @@ def load_config() -> dict[str, Any]:
     }
     data["emails"] = [e for e in data["emails"] if e.strip().lower() != from_email]
     data["workspace_emails"] = workspace_emails(from_email)
+    data["snmp_community"] = env("SNMP_COMMUNITY") or "public"
+    data["api_base"] = env("API_BASE").rstrip("/")
+    data["bridge_token"] = env("BRIDGE_TOKEN")
     return data
 
 
@@ -599,11 +602,63 @@ def cmd_scan(cfg: dict[str, Any], args: argparse.Namespace) -> int:
     return 0
 
 
+_supplies_lock = threading.Lock()
+_supplies: dict[str, Any] = {
+    "online": False,
+    "status": "Offline",
+    "toners": [],
+    "trays": [],
+    "alerts": [],
+    "checked_at": 0,
+}
+
+
+def supplies_snapshot() -> dict[str, Any]:
+    with _supplies_lock:
+        return dict(_supplies)
+
+
+def refresh_supplies(cfg: dict[str, Any]) -> dict[str, Any]:
+    import xerox_snmp
+
+    host = str(cfg.get("printer_host") or "")
+    community = str(cfg.get("snmp_community") or "public")
+    data = xerox_snmp.poll(host, community)
+    with _supplies_lock:
+        global _supplies
+        _supplies = data
+    push_telemetry(cfg, data)
+    return data
+
+
+def push_telemetry(cfg: dict[str, Any], data: dict[str, Any]) -> None:
+    api = str(cfg.get("api_base") or "")
+    token = str(cfg.get("bridge_token") or "")
+    if not api or not token:
+        return
+    body = json.dumps(data).encode()
+    req = urllib.request.Request(
+        f"{api}/bridge/telemetry",
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            resp.read()
+    except (urllib.error.URLError, TimeoutError, OSError):
+        return
+
+
 def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
     base = printer_base(cfg)
     state, adf = scanner_status(cfg)
     smtp = cfg.get("smtp") or {}
     sender = (smtp.get("from_email") or "").lower()
+    supplies = supplies_snapshot()
     return {
         "printer_host": cfg.get("printer_host"),
         "model": "Xerox B305 MFP",
@@ -616,6 +671,9 @@ def printer_state(cfg: dict[str, Any]) -> dict[str, Any]:
         "emails": [e for e in (cfg.get("emails") or []) if e.lower() != sender],
         "workspace_emails": list(cfg.get("workspace_emails") or []),
         "web_ui": f"{base}/",
+        "bridge_online": False,
+        "scans": [],
+        "supplies": supplies,
     }
 
 
@@ -638,6 +696,16 @@ def cmd_dash(cfg: dict[str, Any], port: int, open_browser: bool = True) -> int:
 
     dist = ROOT / "dist"
     cors_origins = ("http://127.0.0.1:5173", "http://localhost:5173")
+
+    def _poll_supplies() -> None:
+        while True:
+            try:
+                refresh_supplies(cfg)
+            except Exception:
+                pass
+            time.sleep(60)
+
+    threading.Thread(target=_poll_supplies, name="snmp-poll", daemon=True).start()
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args: object) -> None:

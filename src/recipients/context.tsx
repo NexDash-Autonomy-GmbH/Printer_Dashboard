@@ -8,6 +8,8 @@ import {
   removeEmail,
   runScan,
   type PrinterState,
+  type ScanLog,
+  type Supplies,
 } from "@/lib/api"
 
 export type ScanSource = "auto" | "platen" | "adf"
@@ -30,6 +32,9 @@ export type RecipientsState = {
   loadError: string | null
   jobStatus: JobStatus
   jobMessage: string
+  bridgeOnline: boolean
+  scans: ScanLog[]
+  supplies: Supplies | null
 }
 
 export type RecipientsActions = {
@@ -63,6 +68,9 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
     scanDir: data.scan_dir,
     loaded: true,
     loadError: null,
+    bridgeOnline: Boolean(data.bridge_online),
+    scans: data.scans || [],
+    supplies: data.supplies || null,
   }
 }
 
@@ -83,6 +91,9 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     loadError: null,
     jobStatus: "idle",
     jobMessage: "",
+    bridgeOnline: false,
+    scans: [],
+    supplies: null,
   })
 
   const refresh = useCallback(async () => {

@@ -1,3 +1,11 @@
+export type ScanLog = {
+  at: number
+  name: string
+  stage: string
+  recipients: string[]
+  error?: string
+}
+
 export type PrinterState = {
   printer_host: string
   model: string
@@ -10,6 +18,23 @@ export type PrinterState = {
   emails: string[]
   workspace_emails?: string[]
   web_ui: string
+  bridge_online?: boolean
+  scans?: ScanLog[]
+  supplies?: Supplies | null
+}
+
+export type Supplies = {
+  online: boolean
+  status: string
+  model?: string
+  serial?: string
+  pages?: number | null
+  uptime_ticks?: number
+  console?: string
+  toners: Array<{ name: string; pct: number | null; color: string }>
+  trays: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>
+  alerts: Array<{ severity: string; desc: string }>
+  checked_at: number
 }
 
 export type ScanResult = {

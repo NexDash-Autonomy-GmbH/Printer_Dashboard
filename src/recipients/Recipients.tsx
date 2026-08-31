@@ -1,6 +1,5 @@
-import { useTransition } from "react"
-import { motion } from "motion/react"
-import { CheckIcon, CircleAlertIcon } from "lucide-react"
+import { useState, useTransition } from "react"
+import { CheckIcon, CircleAlertIcon, MenuIcon, PrinterIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -9,9 +8,10 @@ import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
 import { Toggle } from "@/components/ui/toggle"
-import { glass } from "@/lib/glass"
 import { cn } from "@/lib/utils"
 import { useRecipients } from "@/recipients/context"
+
+type View = "overview" | "scan" | "recipients" | "jobs" | "supplies"
 
 function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
   const value = scanner.toLowerCase()
@@ -43,6 +43,18 @@ function adfView(
     return { state: "idle", label: "ADF empty" }
   }
   return { state: "active", label: "ADF loaded" }
+}
+
+function formatWhen(at: number): string {
+  try {
+    return new Intl.DateTimeFormat("en-GB", {
+      dateStyle: "medium",
+      timeStyle: "short",
+      timeZone: "Europe/Berlin",
+    }).format(new Date(at))
+  } catch {
+    return new Date(at).toISOString()
+  }
 }
 
 function RecipientsAddForm() {
@@ -79,7 +91,7 @@ function RecipientsAddForm() {
           value={state.draft}
           aria-invalid={state.invalid}
           onChange={(event) => actions.setDraft(event.target.value)}
-          className="h-11 min-w-0 flex-1 appearance-none rounded-full border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-11 min-w-0 flex-1 appearance-none rounded-lg border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <AnimatedButton type="submit" size="lg" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
@@ -145,19 +157,16 @@ function RecipientsList() {
     return null
   }
 
+  if (state.emails.length === 0) {
+    return <p className="text-sm text-muted-foreground">None yet. Scan still saves a PDF, it just is not mailed.</p>
+  }
+
   return (
-    <section className="flex flex-col gap-3">
-      <h2 className="text-lg font-semibold tracking-tight">Recipients</h2>
-      {state.emails.length === 0 ? (
-        <p className="text-sm text-muted-foreground">None yet.</p>
-      ) : (
-        <ul className="divide-y divide-border rounded-2xl border border-border">
-          {state.emails.map((email) => (
-            <RecipientRow key={email} email={email} />
-          ))}
-        </ul>
-      )}
-    </section>
+    <ul className="divide-y divide-border rounded-xl border border-border bg-card">
+      {state.emails.map((email) => (
+        <RecipientRow key={email} email={email} />
+      ))}
+    </ul>
   )
 }
 
@@ -268,98 +277,374 @@ function RecipientsScan() {
   )
 }
 
-export function RecipientsDashboard() {
+function NavButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center rounded-lg px-3 py-2 text-left text-sm font-medium transition-colors duration-150",
+        active
+          ? "bg-sidebar-accent text-sidebar-accent-foreground"
+          : "text-sidebar-foreground/70 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
+function OverviewView() {
   const { state } = useRecipients()
   const adf = adfView(state.scanner, state.adf)
+  const online = state.bridgeOnline || scannerState(state.scanner) === "active"
+  const last = state.scans[0]
 
   return (
-    <div className="flex min-h-dvh flex-1 flex-col bg-background">
-      <header className={cn(glass.overlay, "sticky top-0 border-b border-white/20 dark:border-white/10")}>
-        <div className="mx-auto flex h-16 w-full max-w-xl items-center justify-between gap-4 px-6">
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">Xerox B305</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-4">
-              <StatusIndicator
-                size="sm"
-                state={scannerState(state.scanner)}
-                label={state.scanner}
-              />
-              <StatusIndicator
-                size="sm"
-                state={adf.state}
-                label={adf.label}
-              />
-            </div>
-          </div>
-          <SwitchMode
-            width={84}
-            height={42}
-            darkColor="#111"
-            lightColor="#F9F9F9"
-            knobDarkColor="#1C1C1C"
-            knobLightColor="#F3F3F7"
-            borderDarkColor="#444"
-            borderLightColor="#DDD"
-          />
+    <div className="flex flex-col gap-6">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Bridge</p>
+          <p className="mt-2 text-2xl font-semibold">{online ? "Online" : "Offline"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">ESP8266 on NexDash Wi-Fi</p>
         </div>
-      </header>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Recipients</p>
+          <p className="mt-2 text-2xl font-semibold">{state.emails.length}</p>
+          <p className="mt-1 text-xs text-muted-foreground">Empty list means no mail</p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Last scan</p>
+          <p className="mt-2 text-2xl font-semibold">{last ? last.stage : "None"}</p>
+          <p className="mt-1 text-xs text-muted-foreground">{last ? formatWhen(last.at) : "Nothing yet"}</p>
+        </div>
+      </div>
 
-      <main className="flex flex-1 flex-col items-center justify-center bg-black/40 px-4 py-8 sm:px-6">
-        <motion.div
-          role="dialog"
-          aria-labelledby="scan-dialog-title"
-          aria-modal="true"
-          initial={{
-            opacity: 0,
-            filter: "blur(4px)",
-            transform: "perspective(500px) rotateX(-12deg) scale(0.96)",
-          }}
-          animate={{
-            opacity: 1,
-            filter: "blur(0px)",
-            transform: "perspective(500px) rotateX(0deg) scale(1)",
-          }}
-          transition={{ type: "spring", stiffness: 150, damping: 25 }}
-          className={cn(
-            glass.frosted,
-            "squircle grid w-full max-w-[calc(100%-2rem)] gap-4 border border-white/20 p-6 dark:border-white/10 sm:max-w-lg"
-          )}
-        >
-          <div className="flex flex-col gap-2">
-            <h2 id="scan-dialog-title" className="text-lg font-semibold leading-none">
-              {state.source === "adf" ? "Feeder" : "Glass"}
-            </h2>
-            {state.source === "adf" ? (
-              <p className="text-sm text-muted-foreground">
-                Reads the stack in the ADF and merges it into one PDF. Load paper until the header says ADF loaded, then Scan. Mail goes from the sender below to Recipients.
-              </p>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Reads one page from the flatbed. Put the sheet on the glass, then Scan. Mail goes from the sender below to Recipients.
-              </p>
-            )}
-            <p className="text-sm text-muted-foreground">
-              Sender{" "}
-              <span className="font-medium text-foreground" translate="no">
-                {state.fromEmail || "SMTP_FROM_EMAIL"}
-              </span>
+      <article className="overflow-hidden rounded-xl border border-border bg-card">
+        <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-5 py-4">
+          <div>
+            <h2 className="text-base font-semibold">Xerox B305</h2>
+            <p className="mt-0.5 text-xs text-muted-foreground">NexDash office · {state.model}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusIndicator size="sm" state={online ? "active" : "down"} label={online ? "online" : "offline"} />
+            <StatusIndicator size="sm" state={scannerState(state.scanner)} label={state.scanner} />
+            <StatusIndicator size="sm" state={adf.state} label={adf.label} />
+          </div>
+        </header>
+        <div className="grid gap-3 p-5 sm:grid-cols-2">
+          <div className="rounded-lg bg-muted/50 px-3 py-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Host</p>
+            <p className="mt-1 font-mono text-sm" translate="no">
+              {state.printerHost || "192.168.68.52"}
             </p>
           </div>
-          {state.loadError ? (
-            <Alert>
-              <AlertTitle>Printer unreachable</AlertTitle>
-              <AlertDescription>{state.loadError}</AlertDescription>
-            </Alert>
-          ) : null}
-          <RecipientsAddForm />
-          <RecipientsList />
-          <JobBanner />
-          <ScanSourceToggle />
-          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-            <RecipientsScan />
+          <div className="rounded-lg bg-muted/50 px-3 py-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">Sender</p>
+            <p className="mt-1 text-sm" translate="no">
+              {state.fromEmail || "SMTP_FROM_EMAIL"}
+            </p>
           </div>
-        </motion.div>
-      </main>
+        </div>
+        {state.supplies?.toners.length ? (
+          <div className="flex flex-col gap-3 border-t border-border px-5 py-4">
+            {state.supplies.toners.map((row) => (
+              <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
+            ))}
+          </div>
+        ) : null}
+        <footer className="flex items-center justify-between border-t border-border px-5 py-3 text-xs text-muted-foreground">
+          <span>
+            {state.supplies?.pages != null ? `${state.supplies.pages} pages` : "eSCL scan · PDF mail"}
+          </span>
+          <span>
+            {state.supplies?.checked_at
+              ? `SNMP ${formatWhen(state.supplies.checked_at * 1000)}`
+              : "SNMP when the office box can reach the Xerox"}
+          </span>
+        </footer>
+      </article>
+    </div>
+  )
+}
+
+function SupplyRow({ name, pct, color }: { name: string; pct: number | null; color: string }) {
+  const width = pct == null ? "0%" : `${pct}%`
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-xs">
+        <span className="text-muted-foreground">{name}</span>
+        <span className="font-medium">{pct == null ? "unknown" : `${pct}%`}</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full" style={{ width, background: color }} />
+      </div>
+    </div>
+  )
+}
+
+function SuppliesView() {
+  const { state } = useRecipients()
+  const supplies = state.supplies
+  if (!supplies || (!supplies.online && supplies.toners.length === 0)) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        No SNMP data yet. The Xerox B305 speaks Printer-MIB (community public by default). A box on the
+        office LAN has to poll UDP 161 and post it here. That is the launchd dashboard or office-agent, not
+        Cloudflare.
+      </p>
+    )
+  }
+  return (
+    <div className="flex max-w-xl flex-col gap-6">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Status</p>
+          <p className="mt-2 text-xl font-semibold">{supplies.status}</p>
+        </div>
+        <div className="rounded-xl border border-border bg-card p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Page count</p>
+          <p className="mt-2 text-xl font-semibold">{supplies.pages ?? "—"}</p>
+        </div>
+      </div>
+      {supplies.console ? (
+        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs">{supplies.console}</p>
+      ) : null}
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-semibold">Supplies</h3>
+        {supplies.toners.map((row) => (
+          <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
+        ))}
+      </section>
+      <section className="flex flex-col gap-3">
+        <h3 className="text-sm font-semibold">Trays</h3>
+        {supplies.trays.map((row) => (
+          <SupplyRow
+            key={row.name}
+            name={`${row.name} (${row.status})`}
+            pct={row.pct}
+            color="#3b82f6"
+          />
+        ))}
+      </section>
+      {supplies.alerts.length ? (
+        <section className="flex flex-col gap-2">
+          <h3 className="text-sm font-semibold">Alerts</h3>
+          {supplies.alerts.map((alert) => (
+            <p key={alert.desc} className="rounded-lg border border-border px-3 py-2 text-sm">
+              {alert.severity}: {alert.desc}
+            </p>
+          ))}
+        </section>
+      ) : null}
+    </div>
+  )
+}
+
+function ScanView() {
+  const { state } = useRecipients()
+  return (
+    <div className="mx-auto flex w-full max-w-lg flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-semibold">{state.source === "adf" ? "Feeder" : "Glass"}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {state.source === "adf"
+            ? "Reads the stack in the ADF and merges it into one PDF. Mail goes from the sender to Recipients."
+            : "Reads one page from the flatbed. Mail goes from the sender to Recipients."}
+        </p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Sender{" "}
+          <span className="font-medium text-foreground" translate="no">
+            {state.fromEmail || "SMTP_FROM_EMAIL"}
+          </span>
+        </p>
+      </div>
+      {state.loadError ? (
+        <Alert>
+          <AlertTitle>Printer unreachable</AlertTitle>
+          <AlertDescription>{state.loadError}</AlertDescription>
+        </Alert>
+      ) : null}
+      <JobBanner />
+      <ScanSourceToggle />
+      <RecipientsScan />
+    </div>
+  )
+}
+
+function RecipientsView() {
+  return (
+    <div className="mx-auto flex w-full max-w-lg flex-col gap-4">
+      <div>
+        <h2 className="text-lg font-semibold">Recipients</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Each scan PDF is mailed to this list. The sender is never a recipient.
+        </p>
+      </div>
+      <RecipientsAddForm />
+      <RecipientsList />
+    </div>
+  )
+}
+
+function JobsView() {
+  const { state } = useRecipients()
+  if (state.scans.length === 0) {
+    return <p className="text-sm text-muted-foreground">No scans yet. Use Scan after the office bridge is online.</p>
+  }
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border bg-card">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-left text-xs uppercase tracking-wide text-muted-foreground">
+            <th className="px-4 py-2 font-medium">When</th>
+            <th className="px-4 py-2 font-medium">File</th>
+            <th className="px-4 py-2 font-medium">Status</th>
+            <th className="px-4 py-2 font-medium">To</th>
+          </tr>
+        </thead>
+        <tbody>
+          {state.scans.map((row, index) => (
+            <tr key={`${row.at}-${index}`} className="border-b border-border last:border-0">
+              <td className="whitespace-nowrap px-4 py-2.5">{formatWhen(row.at)}</td>
+              <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
+              <td className="px-4 py-2.5">{row.error || row.stage}</td>
+              <td className="px-4 py-2.5 text-muted-foreground">
+                {row.recipients.length ? row.recipients.join(", ") : "nobody"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function viewCopy(view: View): { title: string; sub: string } {
+  switch (view) {
+    case "overview":
+      return { title: "Overview", sub: "Xerox B305 at the office" }
+    case "scan":
+      return { title: "Scan", sub: "Glass or feeder, then mail the PDF" }
+    case "recipients":
+      return { title: "Recipients", sub: "Who gets the scanned PDF" }
+    case "jobs":
+      return { title: "Scan jobs", sub: "Recent jobs on the cloud API" }
+    case "supplies":
+      return { title: "Supplies", sub: "Toner, trays, and alerts from SNMP" }
+    default: {
+      const _never: never = view
+      return _never
+    }
+  }
+}
+
+export function RecipientsDashboard() {
+  const { state, actions } = useRecipients()
+  const [view, setView] = useState<View>("overview")
+  const [navOpen, setNavOpen] = useState(false)
+  const copy = viewCopy(view)
+
+  const go = (next: View) => {
+    setView(next)
+    setNavOpen(false)
+  }
+
+  const nav = (
+    <>
+      <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Monitor</p>
+      <NavButton label="Overview" active={view === "overview"} onClick={() => go("overview")} />
+      <NavButton label="Supplies" active={view === "supplies"} onClick={() => go("supplies")} />
+      <p className="px-3 pb-1 pt-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">Actions</p>
+      <NavButton label="Scan" active={view === "scan"} onClick={() => go("scan")} />
+      <NavButton label="Recipients" active={view === "recipients"} onClick={() => go("recipients")} />
+      <NavButton label="Scan jobs" active={view === "jobs"} onClick={() => go("jobs")} />
+    </>
+  )
+
+  return (
+    <div className="flex min-h-dvh bg-background">
+      {navOpen ? (
+        <button
+          type="button"
+          className="fixed inset-0 z-20 bg-black/40 md:hidden"
+          aria-label="Close menu"
+          onClick={() => setNavOpen(false)}
+        />
+      ) : null}
+
+      <aside
+        className={cn(
+          "fixed inset-y-0 left-0 z-30 flex w-56 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform duration-200",
+          navOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        )}
+      >
+        <div className="flex items-center gap-2 border-b border-sidebar-border px-4 py-4">
+          <PrinterIcon className="size-5 text-primary" aria-hidden="true" />
+          <span className="text-sm font-semibold">NexDash Print</span>
+          <button
+            type="button"
+            className="ml-auto rounded-md p-1 md:hidden"
+            aria-label="Close menu"
+            onClick={() => setNavOpen(false)}
+          >
+            <XIcon className="size-4" />
+          </button>
+        </div>
+        <nav className="flex flex-1 flex-col gap-0.5 p-2">{nav}</nav>
+        <p className="border-t border-sidebar-border px-4 py-3 text-[11px] text-muted-foreground">
+          {state.bridgeOnline ? "Bridge seen recently" : "Bridge offline"}
+        </p>
+      </aside>
+
+      <div className="flex min-h-dvh min-w-0 flex-1 flex-col md:ml-56">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-background px-4 py-3 md:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <button
+              type="button"
+              className="rounded-md p-1 md:hidden"
+              aria-label="Open menu"
+              onClick={() => setNavOpen(true)}
+            >
+              <MenuIcon className="size-5" />
+            </button>
+            <div className="min-w-0">
+              <h1 className="text-base font-semibold">{copy.title}</h1>
+              <p className="text-xs text-muted-foreground">{copy.sub}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <AnimatedButton type="button" variant="outline" size="sm" onClick={() => void actions.refresh()}>
+              Refresh
+            </AnimatedButton>
+            <SwitchMode
+              width={72}
+              height={36}
+              darkColor="#111"
+              lightColor="#F9F9F9"
+              knobDarkColor="#1C1C1C"
+              knobLightColor="#F3F3F7"
+              borderDarkColor="#444"
+              borderLightColor="#DDD"
+            />
+          </div>
+        </header>
+        <main className="flex-1 px-4 py-6 md:px-6">
+          {view === "overview" ? <OverviewView /> : null}
+          {view === "scan" ? <ScanView /> : null}
+          {view === "recipients" ? <RecipientsView /> : null}
+          {view === "jobs" ? <JobsView /> : null}
+          {view === "supplies" ? <SuppliesView /> : null}
+        </main>
+      </div>
     </div>
   )
 }
