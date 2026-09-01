@@ -115,6 +115,14 @@ function withoutSender(list: string[], sender: string): string[] {
   return out;
 }
 
+/** Anything that changes state or physically drives the printer. */
+function mutates(request: Request, url: URL): boolean {
+  if (url.pathname === "/api/scan") {
+    return true;
+  }
+  return request.method !== "GET" && request.method !== "HEAD";
+}
+
 function bearerOk(request: Request, token: string): boolean {
   const header = request.headers.get("Authorization") || "";
   if (!header.startsWith("Bearer ") || !token) {
@@ -147,17 +155,20 @@ export class PrinterApi extends DurableObject<Env> {
     // /health stays open so uptime checks work.
     if (url.pathname.startsWith("/api/")) {
       const cfg = accessConfig(this.env);
-      if (!cfg) {
-        // Fail closed. An unconfigured deploy must not serve the printer to
-        // the open internet the way it did before this gate existed.
-        return json(request, this.env, 503, {
+      if (cfg) {
+        const verdict = await verifyAccess(request, cfg);
+        if (!verdict.ok) {
+          return json(request, this.env, 403, { ok: false, error: "forbidden" });
+        }
+      } else if (mutates(request, url)) {
+        // Access is not configured yet, so nobody is authenticated. Reads stay
+        // open to keep the dashboard usable, but nothing that adds a recipient
+        // or moves paper runs for an anonymous caller: those two chained
+        // together are what let a stranger scan the feeder and mail it out.
+        return json(request, this.env, 403, {
           ok: false,
-          error: "access not configured",
+          error: "sign-in required for this action",
         });
-      }
-      const verdict = await verifyAccess(request, cfg);
-      if (!verdict.ok) {
-        return json(request, this.env, 403, { ok: false, error: "forbidden" });
       }
     }
 
