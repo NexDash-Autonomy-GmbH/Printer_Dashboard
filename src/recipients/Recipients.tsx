@@ -112,7 +112,7 @@ function RecipientsAddForm() {
           value={state.draft}
           aria-invalid={state.invalid}
           onChange={(event) => actions.setDraft(event.target.value)}
-          className="h-11 min-w-0 flex-1 appearance-none rounded-lg border border-input bg-background px-4 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+          className="h-11 min-w-0 flex-1 appearance-none rounded-full border border-input bg-background px-5 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         />
         <AnimatedButton type="submit" size="lg" disabled={pending}>
           {pending ? <Spinner data-icon="inline-start" /> : null}
@@ -227,10 +227,10 @@ function ScanSourceToggle() {
   const feederEmpty = adfView(state.scanner, state.adf).label === "ADF empty"
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex w-full gap-1 rounded-lg border border-input p-0.5" role="group" aria-label="Scan from">
+      <div className="bg-muted/60 flex w-full gap-1 rounded-full border border-input p-1" role="group" aria-label="Scan from">
         <Toggle
           variant="outline"
-          className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+          className="min-w-0 flex-1 rounded-full border-0 shadow-none aria-pressed:bg-primary/20 aria-pressed:font-semibold aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-primary/60 aria-pressed:ring-inset"
           pressed={state.source !== "adf"}
           onPressedChange={() => actions.setSource("platen")}
         >
@@ -238,7 +238,7 @@ function ScanSourceToggle() {
         </Toggle>
         <Toggle
           variant="outline"
-          className="min-w-0 flex-1 border-0 shadow-none data-[state=on]:bg-accent data-[state=on]:text-accent-foreground"
+          className="min-w-0 flex-1 rounded-full border-0 shadow-none aria-pressed:bg-primary/20 aria-pressed:font-semibold aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-primary/60 aria-pressed:ring-inset"
           pressed={state.source === "adf"}
           disabled={feederEmpty}
           onPressedChange={() => actions.setSource("adf")}
