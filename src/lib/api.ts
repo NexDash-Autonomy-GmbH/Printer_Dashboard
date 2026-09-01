@@ -48,13 +48,12 @@ export type ScanResult = {
   log?: string[]
 }
 
-const PRODUCTION_API = "https://printer-api.nexdash.workers.dev"
-
+// Same origin in production: /api/* is served by a Pages Function that forwards
+// to the Worker over a service binding, so Cloudflare Access protects the API
+// with the same first-party session it uses for the page. Calling the Worker's
+// own hostname would need a third-party cookie and would bypass Access.
 function apiBase(): string {
-  const raw = (import.meta.env.VITE_API_BASE as string | undefined)?.trim().replace(/\/$/, "") ?? ""
-  if (raw) return raw
-  if (import.meta.env.PROD) return PRODUCTION_API
-  return ""
+  return (import.meta.env.VITE_API_BASE as string | undefined)?.trim().replace(/\/$/, "") ?? ""
 }
 
 function url(path: string): string {
