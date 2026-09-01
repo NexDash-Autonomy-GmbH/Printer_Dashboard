@@ -278,8 +278,8 @@ void postError(String resultUrl, const char *encoded) {
 
 static uint32_t lastTelemetry = 0;
 
-void postTelemetry(const String &printer) {
-  if (millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
+void postTelemetry(const String &printer, bool force = false) {
+  if (!force && millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
     return;
   }
   lastTelemetry = millis();
@@ -331,6 +331,41 @@ void postTelemetry(const String &printer) {
 // Xerox on port 9100. Never holds the file: 80 KB of RAM against PDFs up to
 // 25 MB, so it is a relay, chunk in and chunk out.
 static const uint16_t RAW_PRINT_PORT = 9100;
+
+static const char *HR_DEVICE_STATUS = "1.3.6.1.2.1.25.3.5.1.1.1";  // 3 idle, 4 printing, 5 warmup
+
+bool printerBusy(const String &printer) {
+  int st = snmpInt(printer.c_str(), HR_DEVICE_STATUS);
+  return st == 4 || st == 5;
+}
+
+// Once the bytes are in, stay with the job until the Xerox says it is done, so
+// "printing" on the dashboard means paper moving and the next job waits for the
+// real finish. Status is posted every pass so the page sees Printing within
+// seconds instead of on the minute.
+void waitForPrinter(const String &printer) {
+  uint32_t start = millis();
+  bool sawPrinting = false;
+  int idleRuns = 0;
+  while (millis() - start < 5UL * 60UL * 1000UL) {
+    int st = snmpInt(printer.c_str(), HR_DEVICE_STATUS);
+    if (st == 4 || st == 5) {
+      sawPrinting = true;
+      idleRuns = 0;
+    } else if (st == 3) {
+      idleRuns++;
+      // Seen it print and now idle: done. Never saw it print for ~12 s: a tiny
+      // job finished between polls, also done.
+      if (sawPrinting || idleRuns >= 4) {
+        break;
+      }
+    }
+    postTelemetry(printer, true);
+    delay(3000);
+    yield();
+  }
+  postTelemetry(printer, true);
+}
 
 void postPrintResult(const String &job, const char *encodedError) {
   String url = String(API_BASE) + "/bridge/print/result?job=" + job;
@@ -403,6 +438,7 @@ bool streamPrintJob(const String &job, const String &printer) {
     // Logged so the real relay rate is known the first time this runs.
     Serial.printf("relay %ld bytes in %lu ms (%lu KB/s)\n", sent, (unsigned long)ms, (unsigned long)(sent / ms));
   }
+  waitForPrinter(printer);
   tcp.flush();
   tcp.stop();
   http.end();
@@ -421,6 +457,10 @@ bool streamPrintJob(const String &job, const String &printer) {
 
 /** Ask for the next print job. Returns true if one was handled, so the caller skips telemetry this pass. */
 bool checkPrintQueue(const String &printer) {
+  // Someone may be printing straight from a laptop. Do not pile a job on top.
+  if (printerBusy(printer)) {
+    return false;
+  }
   String body;
   int code = httpGetSmall(String(API_BASE) + "/bridge/print/next", body, true);
   if (code != 200) {
