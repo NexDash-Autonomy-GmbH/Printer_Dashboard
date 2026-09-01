@@ -627,23 +627,31 @@ export function RecipientsDashboard() {
                   </p>
                 </div>
               </div>
-              <div className="border-border bg-muted/50 flex shrink-0 items-center gap-1.5 rounded-full border p-1.5">
-              <AnimatedButton type="button" variant="outline" onClick={() => void actions.refresh()}>
-                Refresh
-              </AnimatedButton>
-              <Separator orientation="vertical" className="my-1 self-stretch" />
-              <SwitchMode
-                width={72}
-                height={36}
-                darkColor="#111"
-                lightColor="#F9F9F9"
-                knobDarkColor="#1C1C1C"
-                knobLightColor="#F3F3F7"
-                borderDarkColor="#444"
-                borderLightColor="#DDD"
-              />
+              {/* One right-hand cluster. As three siblings under justify-between,
+                  the controls were pushed to the middle of the row. */}
+              <div className="flex shrink-0 items-center gap-3">
+                <div className="border-border bg-muted/50 flex items-center gap-1.5 rounded-full border p-1.5">
+                  <AnimatedButton
+                    type="button"
+                    variant="outline"
+                    onClick={() => void actions.refresh()}
+                  >
+                    Refresh
+                  </AnimatedButton>
+                  <Separator orientation="vertical" className="my-1 self-stretch" />
+                  <SwitchMode
+                    width={72}
+                    height={36}
+                    darkColor="#111"
+                    lightColor="#F9F9F9"
+                    knobDarkColor="#1C1C1C"
+                    knobLightColor="#F3F3F7"
+                    borderDarkColor="#444"
+                    borderLightColor="#DDD"
+                  />
+                </div>
+                <AccountMenu />
               </div>
-              <AccountMenu />
             </div>
             <hr aria-hidden="true" className="border-border" />
           </header>
