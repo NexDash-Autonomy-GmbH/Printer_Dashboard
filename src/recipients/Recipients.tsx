@@ -10,9 +10,12 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { AnimatedButton } from "@/components/ui/animated-button"
+import { FluidTabs, type FluidTabItem } from "@/components/ui/fluid-tabs"
 import { Separator } from "@/components/ui/separator"
 import {
   DashboardSquare01Icon,
+  File01Icon,
+  Layers01Icon,
   DropletIcon,
   ListViewIcon,
   Mail01Icon,
@@ -23,7 +26,6 @@ import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
-import { Toggle } from "@/components/ui/toggle"
 import { useRecipients } from "@/recipients/context"
 
 type View = "overview" | "scan" | "recipients" | "jobs" | "supplies"
@@ -225,33 +227,26 @@ function JobBanner() {
 function ScanSourceToggle() {
   const { state, actions } = useRecipients()
   const feederEmpty = adfView(state.scanner, state.adf).label === "ADF empty"
+  const tabs: FluidTabItem[] = [
+    { id: "platen", label: "Glass", icon: File01Icon },
+    { id: "adf", label: "Feeder", icon: Layers01Icon, disabled: feederEmpty },
+  ]
+
   return (
     <div className="flex flex-col gap-2">
-      <div className="bg-muted/60 flex w-full gap-1 rounded-full border border-input p-1" role="group" aria-label="Scan from">
-        <Toggle
-          variant="outline"
-          className="min-w-0 flex-1 rounded-full border-0 shadow-none aria-pressed:bg-primary/20 aria-pressed:font-semibold aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-primary/60 aria-pressed:ring-inset"
-          pressed={state.source !== "adf"}
-          onPressedChange={() => actions.setSource("platen")}
-        >
-          Glass
-        </Toggle>
-        <Toggle
-          variant="outline"
-          className="min-w-0 flex-1 rounded-full border-0 shadow-none aria-pressed:bg-primary/20 aria-pressed:font-semibold aria-pressed:text-foreground aria-pressed:ring-1 aria-pressed:ring-primary/60 aria-pressed:ring-inset"
-          pressed={state.source === "adf"}
-          disabled={feederEmpty}
-          onPressedChange={() => actions.setSource("adf")}
-        >
-          Feeder
-        </Toggle>
-      </div>
+      <FluidTabs
+        tabs={tabs}
+        value={state.source === "adf" ? "adf" : "platen"}
+        onChange={(id) => actions.setSource(id === "adf" ? "adf" : "platen")}
+        label="Scan from"
+      />
       {feederEmpty ? (
         <p className="text-sm text-muted-foreground">Feeder is empty. Load paper to use it.</p>
       ) : null}
     </div>
   )
 }
+
 
 function RecipientsScan() {
   const { state, actions } = useRecipients()
