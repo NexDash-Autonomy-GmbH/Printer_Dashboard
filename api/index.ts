@@ -19,6 +19,8 @@ export type Env = {
   ACCESS_AUD: string;
   /* Who owned the single shared recipient list before it was namespaced. */
   LEGACY_RECIPIENTS_OWNER: string;
+  /* Uploaded PDFs, keyed print:<job id>. Deleted once the job finishes. */
+  PRINT_FILES: KVNamespace;
 };
 
 type Job = {
@@ -28,6 +30,25 @@ type Job = {
 };
 
 type ScanResult = { pdf?: Uint8Array; error?: string };
+
+type PrintStatus = "queued" | "printing" | "done" | "failed";
+
+type PrintJob = {
+  id: string;
+  owner: string;
+  name: string;
+  size: number;
+  createdAt: number;
+  status: PrintStatus;
+  startedAt?: number;
+  finishedAt?: number;
+  error?: string;
+};
+
+const PRINT_MAX_BYTES = 25 * 1024 * 1024; // KV's per-value ceiling
+const PRINT_FILE_TTL_S = 24 * 60 * 60; // safety net if a delete is ever missed
+const PRINT_STALE_MS = 10 * 60 * 1000; // a job "printing" this long has lost its bridge
+const PRINT_HISTORY = 20;
 
 type ScanLog = {
   at: number;
@@ -87,7 +108,7 @@ function corsHeaders(request: Request, env: Env): Headers {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Vary", "Origin");
     headers.set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization");
+    headers.set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-File-Name");
   }
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
@@ -123,6 +144,20 @@ function mutates(request: Request, url: URL): boolean {
     return true;
   }
   return request.method !== "GET" && request.method !== "HEAD";
+}
+
+/**
+ * Answering before a request body has been read leaves the stream dangling,
+ * and workerd then fails the whole Durable Object with "can't read from
+ * request stream after response has been sent". Every early exit on a request
+ * that may carry a body goes through here first.
+ */
+async function discardBody(request: Request): Promise<void> {
+  if (request.body && !request.bodyUsed) {
+    // Awaited on purpose: fired-and-forgotten it races the response and workerd
+    // still logs the dangling stream.
+    await request.body.cancel().catch(() => undefined);
+  }
 }
 
 function bearerOk(request: Request, token: string): boolean {
@@ -163,6 +198,7 @@ export class PrinterApi extends DurableObject<Env> {
       if (cfg) {
         const verdict = await verifyAccess(request, cfg);
         if (!verdict.ok) {
+          await discardBody(request);
           return json(request, this.env, 403, { ok: false, error: "forbidden" });
         }
         actor = verdict.email.trim().toLowerCase();
@@ -171,6 +207,7 @@ export class PrinterApi extends DurableObject<Env> {
         // open to keep the dashboard usable, but nothing that adds a recipient
         // or moves paper runs for an anonymous caller: those two chained
         // together are what let a stranger scan the feeder and mail it out.
+        await discardBody(request);
         return json(request, this.env, 403, {
           ok: false,
           error: "sign-in required for this action",
@@ -187,6 +224,14 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handleEmails(request, actor);
       case "/api/scan":
         return this.handleScan(request, actor);
+      case "/api/print":
+        return this.handlePrint(request, actor);
+      case "/bridge/print/next":
+        return this.handlePrintNext(request);
+      case "/bridge/print/file":
+        return this.handlePrintFile(request);
+      case "/bridge/print/result":
+        return this.handlePrintResult(request);
       case "/bridge/poll":
         return this.handlePoll(request);
       case "/bridge/result":
@@ -397,6 +442,224 @@ export class PrinterApi extends DurableObject<Env> {
     });
   }
 
+  // ---- print queue --------------------------------------------------------
+  //
+  // One queue for the whole desk, strictly ordered, one job printing at a
+  // time. The Durable Object is a singleton so the lock is just "is anything
+  // in the printing state". Everyone sees the queue — names included — so a
+  // person waiting knows who is ahead of them and why.
+
+  private async printJobs(): Promise<PrintJob[]> {
+    return (await this.ctx.storage.get<PrintJob[]>("printJobs")) ?? [];
+  }
+
+  private async savePrintJobs(jobs: PrintJob[]): Promise<void> {
+    // Keep the live jobs and a short tail of finished ones for the history list.
+    const live = jobs.filter((j) => j.status === "queued" || j.status === "printing");
+    const done = jobs
+      .filter((j) => j.status === "done" || j.status === "failed")
+      .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
+      .slice(0, PRINT_HISTORY);
+    await this.ctx.storage.put("printJobs", [...live, ...done]);
+  }
+
+  /** A bridge that claimed a job and vanished must not block the queue forever. */
+  private expireStalePrinting(jobs: PrintJob[], now: number): boolean {
+    let changed = false;
+    for (const job of jobs) {
+      if (job.status === "printing" && now - (job.startedAt ?? now) > PRINT_STALE_MS) {
+        job.status = "failed";
+        job.finishedAt = now;
+        job.error = "The printer bridge stopped responding mid-job.";
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private printView(jobs: PrintJob[], actor: string, now: number) {
+    const queue = jobs
+      .filter((j) => j.status === "queued" || j.status === "printing")
+      .sort((a, b) => a.createdAt - b.createdAt);
+    let position = 0;
+    return {
+      bridge_online: this.lastSeen > 0 && now - this.lastSeen < 45_000,
+      printing: queue.find((j) => j.status === "printing")?.id ?? null,
+      jobs: jobs
+        .sort((a, b) => a.createdAt - b.createdAt)
+        .map((j) => ({
+          id: j.id,
+          name: j.name,
+          size: j.size,
+          owner: j.owner,
+          mine: !actor || j.owner === actor,
+          status: j.status,
+          error: j.error,
+          created_at: j.createdAt,
+          finished_at: j.finishedAt,
+          // 1-based place in line for queued jobs; 0 for the one printing
+          position: j.status === "queued" ? ++position : j.status === "printing" ? 0 : null,
+        })),
+    };
+  }
+
+  private async handlePrint(request: Request, actor: string): Promise<Response> {
+    const now = Date.now();
+    const jobs = await this.printJobs();
+    if (this.expireStalePrinting(jobs, now)) {
+      await this.savePrintJobs(jobs);
+    }
+
+    if (request.method === "GET") {
+      return json(request, this.env, 200, { ok: true, ...this.printView(jobs, actor, now) });
+    }
+
+    if (request.method === "DELETE") {
+      const id = new URL(request.url).searchParams.get("id") || "";
+      const job = jobs.find((j) => j.id === id);
+      if (!job) {
+        return json(request, this.env, 404, { ok: false, error: "no such job" });
+      }
+      if (actor && job.owner !== actor) {
+        return json(request, this.env, 403, { ok: false, error: "that is someone else's job" });
+      }
+      if (job.status !== "queued") {
+        return json(request, this.env, 409, { ok: false, error: "that job is already printing" });
+      }
+      await this.env.PRINT_FILES.delete(`print:${id}`);
+      await this.savePrintJobs(jobs.filter((j) => j.id !== id));
+      return json(request, this.env, 200, { ok: true, ...this.printView(jobs.filter((j) => j.id !== id), actor, now) });
+    }
+
+    if (request.method !== "POST") {
+      await discardBody(request);
+      return json(request, this.env, 405, { ok: false, error: "method not allowed" });
+    }
+
+    const declared = Number(request.headers.get("Content-Length") || "0");
+    if (declared > PRINT_MAX_BYTES) {
+      await discardBody(request);
+      return json(request, this.env, 413, { ok: false, error: "PDFs up to 25 MB only" });
+    }
+    const bytes = new Uint8Array(await request.arrayBuffer());
+    if (bytes.byteLength === 0) {
+      return json(request, this.env, 400, { ok: false, error: "empty upload" });
+    }
+    if (bytes.byteLength > PRINT_MAX_BYTES) {
+      return json(request, this.env, 413, { ok: false, error: "PDFs up to 25 MB only" });
+    }
+    // The printer speaks PDF. Check the magic bytes, not the filename.
+    const head = String.fromCharCode(...bytes.subarray(0, 5));
+    if (head !== "%PDF-") {
+      return json(request, this.env, 415, {
+        ok: false,
+        error: "Only PDF prints. For anything else, press Ctrl+P and choose Save as PDF first.",
+      });
+    }
+    const rawName = decodeURIComponent(request.headers.get("X-File-Name") || "document.pdf");
+    const name = rawName.replace(/[\r\n]/g, " ").slice(0, 120) || "document.pdf";
+    const id = crypto.randomUUID();
+    await this.env.PRINT_FILES.put(`print:${id}`, bytes, { expirationTtl: PRINT_FILE_TTL_S });
+    const job: PrintJob = {
+      id,
+      owner: actor,
+      name,
+      size: bytes.byteLength,
+      createdAt: now,
+      status: "queued",
+    };
+    jobs.push(job);
+    await this.savePrintJobs(jobs);
+    // Wake a bridge that is long-polling for work.
+    for (const wake of this.pollWaiters.splice(0)) {
+      wake();
+    }
+    return json(request, this.env, 201, { ok: true, id, ...this.printView(jobs, actor, now) });
+  }
+
+  /** Bridge: claim the next job. Refuses while one is printing — that is the lock. */
+  private async handlePrintNext(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    this.lastSeen = Date.now();
+    const now = Date.now();
+    const jobs = await this.printJobs();
+    const stale = this.expireStalePrinting(jobs, now);
+    if (jobs.some((j) => j.status === "printing")) {
+      if (stale) await this.savePrintJobs(jobs);
+      return json(request, this.env, 200, { job: "" });
+    }
+    const next = jobs
+      .filter((j) => j.status === "queued")
+      .sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (!next) {
+      if (stale) await this.savePrintJobs(jobs);
+      return json(request, this.env, 200, { job: "" });
+    }
+    next.status = "printing";
+    next.startedAt = now;
+    await this.savePrintJobs(jobs);
+    return json(request, this.env, 200, {
+      job: next.id,
+      name: next.name,
+      size: next.size,
+      printer: this.env.PRINTER_HOST || "192.168.68.52",
+    });
+  }
+
+  /** Bridge: the bytes for a claimed job, streamed so the ESP never holds the file. */
+  private async handlePrintFile(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    this.lastSeen = Date.now();
+    const id = new URL(request.url).searchParams.get("job") || "";
+    const jobs = await this.printJobs();
+    const job = jobs.find((j) => j.id === id && j.status === "printing");
+    if (!job) {
+      return json(request, this.env, 404, { ok: false, error: "no such printing job" });
+    }
+    const body = await this.env.PRINT_FILES.get(`print:${id}`, "stream");
+    if (!body) {
+      job.status = "failed";
+      job.finishedAt = Date.now();
+      job.error = "The file was gone before it could print.";
+      await this.savePrintJobs(jobs);
+      return json(request, this.env, 410, { ok: false, error: "file gone" });
+    }
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Length": String(job.size),
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  /** Bridge: job finished, one way or the other. The file goes either way. */
+  private async handlePrintResult(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    this.lastSeen = Date.now();
+    const url = new URL(request.url);
+    const id = url.searchParams.get("job") || "";
+    const errMsg = (url.searchParams.get("error") || "").slice(0, 200);
+    const jobs = await this.printJobs();
+    const job = jobs.find((j) => j.id === id);
+    if (!job) {
+      return json(request, this.env, 404, { ok: false, error: "no such job" });
+    }
+    job.status = errMsg ? "failed" : "done";
+    job.finishedAt = Date.now();
+    if (errMsg) job.error = errMsg;
+    await this.env.PRINT_FILES.delete(`print:${id}`);
+    await this.savePrintJobs(jobs);
+    return json(request, this.env, 200, { ok: true });
+  }
+
   private async handlePoll(request: Request): Promise<Response> {
     if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
       return new Response("forbidden", { status: 403 });
@@ -488,9 +751,34 @@ export class PrinterApi extends DurableObject<Env> {
   }
 }
 
+// Largest body any route accepts (a 25 MB print PDF), plus headroom.
+const MAX_BODY_BYTES = 26 * 1024 * 1024;
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // Read the body here, before the Durable Object sees it. A stream handed
+    // into the DO stays owned by this context, so when the DO answers early —
+    // a 403 from the gate, a 405, a 413 — the unread stream dangles and workerd
+    // logs "can't read from request stream after response has been sent" on
+    // every one. Buffering once up front costs at most 26 MB and ends that.
+    let forward = request;
+    if (request.body) {
+      const declared = Number(request.headers.get("Content-Length") || "0");
+      if (declared > MAX_BODY_BYTES) {
+        await request.body.cancel().catch(() => undefined);
+        return new Response(JSON.stringify({ ok: false, error: "body too large" }), {
+          status: 413,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const body = await request.arrayBuffer();
+      forward = new Request(request.url, {
+        method: request.method,
+        headers: request.headers,
+        body: body.byteLength ? body : null,
+      });
+    }
     const id = env.PRINTER_API.idFromName("singleton");
-    return env.PRINTER_API.get(id).fetch(request);
+    return env.PRINTER_API.get(id).fetch(forward);
   },
 };

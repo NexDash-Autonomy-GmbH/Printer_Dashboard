@@ -183,3 +183,71 @@ export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanRe
     return { ok: false, stage: "scan_failed", error: UNREACHABLE }
   }
 }
+
+// ---- print queue ------------------------------------------------------------
+
+export type PrintStatus = "queued" | "printing" | "done" | "failed"
+
+export type PrintJob = {
+  id: string
+  name: string
+  size: number
+  owner: string
+  mine: boolean
+  status: PrintStatus
+  error?: string
+  created_at: number
+  finished_at?: number
+  /** 1-based place in line while queued; 0 while printing; null once finished. */
+  position: number | null
+}
+
+export type PrintQueue = {
+  bridge_online: boolean
+  printing: string | null
+  jobs: PrintJob[]
+}
+
+export const PRINT_MAX_BYTES = 25 * 1024 * 1024
+
+async function printJson(res: Response): Promise<PrintQueue & { ok: boolean; error?: string; id?: string }> {
+  const data = await readJson<PrintQueue & { ok: boolean; error?: string; id?: string }>(res)
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || `Print queue error (HTTP ${res.status})`)
+  }
+  return data
+}
+
+export async function fetchPrintQueue(): Promise<PrintQueue> {
+  const res = await request("/api/print", { redirect: "manual" }, 8000)
+  if (res.type === "opaqueredirect" || res.status === 401 || res.status === 403) {
+    throw new Error(SIGNED_OUT)
+  }
+  return printJson(res)
+}
+
+/** Uploads one PDF. The body is the raw file; the name rides in a header. */
+export async function uploadPrint(file: File): Promise<PrintQueue & { id?: string }> {
+  if (file.size > PRINT_MAX_BYTES) {
+    throw new Error("PDFs up to 25 MB only")
+  }
+  // Uploads can be slow on office Wi-Fi; give them room.
+  const res = await request(
+    "/api/print",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/pdf",
+        "X-File-Name": encodeURIComponent(file.name),
+      },
+      body: file,
+    },
+    120_000,
+  )
+  return printJson(res)
+}
+
+export async function cancelPrint(id: string): Promise<PrintQueue> {
+  const res = await request(`/api/print?id=${encodeURIComponent(id)}`, { method: "DELETE" })
+  return printJson(res)
+}
