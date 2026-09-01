@@ -492,8 +492,10 @@ function ScanView() {
       </div>
       {state.loadError ? (
         <Alert>
-          <AlertTitle>Printer unreachable</AlertTitle>
-          <AlertDescription>{state.loadError}</AlertDescription>
+          <AlertTitle>{state.loadError}</AlertTitle>
+          <AlertDescription>
+            Nothing on this page is live until the desk can read the printer.
+          </AlertDescription>
         </Alert>
       ) : null}
       <JobBanner />
