@@ -16,6 +16,7 @@ import {
   uploadPrint,
 } from "@/lib/api"
 import { formatWhen } from "@/lib/format"
+import { useRecipients } from "@/recipients/context"
 
 // The queue moves when the bridge finishes a page, not when this tab does
 // anything, so it is re-read on a timer while the page is open.
@@ -32,7 +33,17 @@ function ownerLabel(job: PrintJob): string {
   return job.owner.split("@")[0] || "Someone"
 }
 
-function JobRow({ job, onCancel, busy }: { job: PrintJob; onCancel: (id: string) => void; busy: boolean }) {
+function JobRow({
+  job,
+  onCancel,
+  busy,
+  printerBusy,
+}: {
+  job: PrintJob
+  onCancel: (id: string) => void
+  busy: boolean
+  printerBusy: boolean
+}) {
   const reduce = useReducedMotion() ?? false
   const printing = job.status === "printing"
   const finished = job.status === "done" || job.status === "failed"
@@ -87,7 +98,7 @@ function JobRow({ job, onCancel, busy }: { job: PrintJob; onCancel: (id: string)
           {printing ? (
             <span className="text-primary inline-flex items-center gap-1.5 font-medium">
               <LoaderCircleIcon className={reduce ? "size-3.5" : "size-3.5 animate-spin"} />
-              Printing
+              {printerBusy ? "Printing" : "Sending to printer"}
             </span>
           ) : job.status === "queued" ? (
             <span className="text-muted-foreground">#{job.position} in line</span>
@@ -117,6 +128,11 @@ function JobRow({ job, onCancel, busy }: { job: PrintJob; onCancel: (id: string)
 }
 
 export function PrintView() {
+  // What the Xerox itself reports over SNMP, via the bridge. The animation
+  // follows this, not our queue: "printing" here means paper is moving.
+  const { state: desk } = useRecipients()
+  const printerStatus = (desk.supplies?.status || "").toLowerCase()
+  const printerBusy = printerStatus === "printing" || printerStatus === "warmup"
   const [queue, setQueue] = useState<PrintQueue | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(0)
@@ -187,7 +203,9 @@ export function PrintView() {
 
   const jobs = queue?.jobs ?? []
   const nowPrinting = jobs.find((j) => j.status === "printing") ?? null
-  const live = jobs.filter((j) => j.status === "queued")
+  // A claimed job stays in the list until the printer itself confirms it is
+  // working; then the card above carries it.
+  const live = jobs.filter((j) => j.status === "queued" || (j.status === "printing" && !printerBusy))
   const history = jobs.filter((j) => j.status === "done" || j.status === "failed").slice(-8).reverse()
   const someoneElsePrinting = nowPrinting !== null && !nowPrinting.mine
   const myQueued = live.filter((j) => j.mine && j.status === "queued")
@@ -211,19 +229,32 @@ export function PrintView() {
         </Alert>
       ) : null}
 
-      {nowPrinting ? (
+      {printerBusy ? (
         <section
           aria-live="polite"
           className="border-border bg-card flex items-center gap-5 rounded-2xl border p-5"
         >
           <PrintingAnimation className="size-24 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-primary text-xs font-semibold tracking-wide uppercase">Now printing</p>
-            <p className="text-foreground mt-1 truncate text-base font-semibold">{nowPrinting.name}</p>
-            <p className="text-muted-foreground mt-0.5 text-sm">
-              {ownerLabel(nowPrinting)} · {formatBytes(nowPrinting.size)}
-              {nowPrinting.mine ? "" : " · yours starts when this finishes"}
+            <p className="text-primary text-xs font-semibold tracking-wide uppercase">
+              {printerStatus === "warmup" ? "Warming up" : "Now printing"}
             </p>
+            {nowPrinting ? (
+              <>
+                <p className="text-foreground mt-1 truncate text-base font-semibold">{nowPrinting.name}</p>
+                <p className="text-muted-foreground mt-0.5 text-sm">
+                  {ownerLabel(nowPrinting)} · {formatBytes(nowPrinting.size)}
+                  {nowPrinting.mine ? "" : " · yours starts when this finishes"}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="text-foreground mt-1 text-base font-semibold">Something not from this queue</p>
+                <p className="text-muted-foreground mt-0.5 text-sm">
+                  Most likely a laptop printing directly. Queued jobs wait for it.
+                </p>
+              </>
+            )}
           </div>
         </section>
       ) : null}
@@ -262,7 +293,7 @@ export function PrintView() {
           <ul className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
               {live.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={(id) => void cancel(id)} busy={busyId === job.id} />
+                <JobRow key={job.id} job={job} onCancel={(id) => void cancel(id)} busy={busyId === job.id} printerBusy={printerBusy} />
               ))}
             </AnimatePresence>
           </ul>
@@ -276,7 +307,7 @@ export function PrintView() {
           </h2>
           <ul className="flex flex-col gap-2">
             {history.map((job) => (
-              <JobRow key={job.id} job={job} onCancel={() => undefined} busy={false} />
+              <JobRow key={job.id} job={job} onCancel={() => undefined} busy={false} printerBusy={printerBusy} />
             ))}
           </ul>
         </section>

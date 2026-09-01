@@ -47,7 +47,7 @@ type PrintJob = {
 
 const PRINT_MAX_BYTES = 25 * 1024 * 1024; // KV's per-value ceiling
 const PRINT_FILE_TTL_S = 24 * 60 * 60; // safety net if a delete is ever missed
-const PRINT_STALE_MS = 10 * 60 * 1000; // a job "printing" this long has lost its bridge
+const PRINT_STALE_MS = 15 * 60 * 1000; // relay plus the printer finishing; longer than that, the bridge is gone
 const PRINT_HISTORY = 20;
 
 type ScanLog = {
