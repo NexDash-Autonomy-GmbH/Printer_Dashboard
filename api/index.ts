@@ -17,6 +17,8 @@ export type Env = {
   /* Cloudflare Access. Both must be set or every /api/* route refuses. */
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
+  /* Who owned the single shared recipient list before it was namespaced. */
+  LEGACY_RECIPIENTS_OWNER: string;
 };
 
 type Job = {
@@ -153,6 +155,9 @@ export class PrinterApi extends DurableObject<Env> {
     // /api/* is the human surface and is gated by Cloudflare Access. /bridge/*
     // is the ESP8266, which cannot do SSO and carries BRIDGE_TOKEN instead.
     // /health stays open so uptime checks work.
+    // Empty when Access is not in front (local dev). Recipients then fall back
+    // to the shared pre-namespace list rather than vanishing.
+    let actor = "";
     if (url.pathname.startsWith("/api/")) {
       const cfg = accessConfig(this.env);
       if (cfg) {
@@ -160,6 +165,7 @@ export class PrinterApi extends DurableObject<Env> {
         if (!verdict.ok) {
           return json(request, this.env, 403, { ok: false, error: "forbidden" });
         }
+        actor = verdict.email.trim().toLowerCase();
       } else if (mutates(request, url)) {
         // Access is not configured yet, so nobody is authenticated. Reads stay
         // open to keep the dashboard usable, but nothing that adds a recipient
@@ -176,11 +182,11 @@ export class PrinterApi extends DurableObject<Env> {
       case "/health":
         return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
       case "/api/state":
-        return this.handleState(request);
+        return this.handleState(request, actor);
       case "/api/emails":
-        return this.handleEmails(request);
+        return this.handleEmails(request, actor);
       case "/api/scan":
-        return this.handleScan(request);
+        return this.handleScan(request, actor);
       case "/bridge/poll":
         return this.handlePoll(request);
       case "/bridge/result":
@@ -192,11 +198,32 @@ export class PrinterApi extends DurableObject<Env> {
     }
   }
 
-  private async emails(): Promise<string[]> {
-    return (await this.ctx.storage.get<string[]>("emails")) ?? [];
+  /** Recipient lists are per signed-in person; "emails" is the pre-namespace list. */
+  private emailsKey(actor: string): string {
+    return actor ? `emails:${actor}` : "emails";
   }
 
-  private async handleState(request: Request): Promise<Response> {
+  private async emails(actor: string): Promise<string[]> {
+    const key = this.emailsKey(actor);
+    const own = await this.ctx.storage.get<string[]>(key);
+    if (own) {
+      return own;
+    }
+    // The shared list predates namespacing, so it belongs to whoever owned it.
+    // Moved once, on that person's first read, then the old key is gone.
+    const owner = (this.env.LEGACY_RECIPIENTS_OWNER || "").trim().toLowerCase();
+    if (actor && owner && actor === owner) {
+      const legacy = await this.ctx.storage.get<string[]>("emails");
+      if (legacy && legacy.length) {
+        await this.ctx.storage.put(key, legacy);
+        await this.ctx.storage.delete("emails");
+        return legacy;
+      }
+    }
+    return [];
+  }
+
+  private async handleState(request: Request, actor: string): Promise<Response> {
     const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
     const online = this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000;
     return json(request, this.env, 200, {
@@ -208,7 +235,7 @@ export class PrinterApi extends DurableObject<Env> {
       from_email: this.env.SMTP_FROM_EMAIL || null,
       from_name: this.env.SMTP_FROM_NAME || null,
       ses_region: this.env.SMTP_HOST || "smtp.gmail.com",
-      emails: withoutSender(await this.emails(), from),
+      emails: withoutSender(await this.emails(actor), from),
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
       bridge_online: online,
@@ -230,8 +257,8 @@ export class PrinterApi extends DurableObject<Env> {
     await this.ctx.storage.put("scans", next);
   }
 
-  private async handleEmails(request: Request): Promise<Response> {
-    const current = await this.emails();
+  private async handleEmails(request: Request, actor: string): Promise<Response> {
+    const current = await this.emails(actor);
     const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
     if (request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { email?: string };
@@ -243,27 +270,27 @@ export class PrinterApi extends DurableObject<Env> {
         return json(request, this.env, 400, { ok: false, error: `${email} is the sender, not a recipient` });
       }
       const next = current.includes(email) ? current : [...current, email];
-      await this.ctx.storage.put("emails", next);
+      await this.ctx.storage.put(this.emailsKey(actor), next);
       return json(request, this.env, 200, { ok: true, emails: next, added: next.length !== current.length });
     }
     if (request.method === "DELETE") {
       const url = new URL(request.url);
       const email = (url.searchParams.get("email") || "").trim().toLowerCase();
       const next = current.filter((item) => item !== email);
-      await this.ctx.storage.put("emails", next);
+      await this.ctx.storage.put(this.emailsKey(actor), next);
       return json(request, this.env, 200, { ok: true, emails: next });
     }
     return json(request, this.env, 405, { ok: false, error: "method not allowed" });
   }
 
-  private async handleScan(request: Request): Promise<Response> {
+  private async handleScan(request: Request, actor: string): Promise<Response> {
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
     const body = ((await request.json().catch(() => ({}))) || {}) as { source?: string };
     const source = body.source || "platen";
     const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
-    const recipients = withoutSender(await this.emails(), from);
+    const recipients = withoutSender(await this.emails(actor), from);
     if (this.queued || this.active) {
       return json(request, this.env, 200, {
         ok: false,
