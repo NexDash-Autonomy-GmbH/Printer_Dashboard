@@ -140,7 +140,8 @@
     --chart-3: oklch(0.44 0.035 257);
     --chart-4: oklch(0.33 0.028 257);
     --chart-5: oklch(0.22 0.02 257);
-    --radius: 0.4rem;
+    /* Drives the whole rounded-* scale. 0.4rem read as square next to the pill buttons. */
+    --radius: 0.75rem;
     --sidebar: oklch(0.968 0.007 247.9);
     --sidebar-foreground: oklch(0 0 0);
     --sidebar-primary: oklch(0.571 0.108 165.6);
