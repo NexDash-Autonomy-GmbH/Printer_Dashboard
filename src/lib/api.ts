@@ -89,16 +89,34 @@ async function readJson<T>(res: Response): Promise<T> {
   }
 }
 
+export const SIGNED_OUT = "Your sign-in has expired. Reload the page to sign in again."
+
 export async function fetchState(): Promise<PrinterState> {
   try {
-    const res = await request("/api/state", {}, 4000)
+    // Do not chase a redirect: Access answers an expired session with a 302 to
+    // its own login host, and following that cross-origin fails CORS, which
+    // used to surface as "Printer unreachable" — the wrong diagnosis entirely.
+    const res = await request("/api/state", { redirect: "manual" }, 4000)
+    if (res.type === "opaqueredirect" || res.status === 0) {
+      throw new Error(SIGNED_OUT)
+    }
+    if (res.status === 401 || res.status === 403) {
+      throw new Error(SIGNED_OUT)
+    }
+    if (res.status === 503) {
+      throw new Error("The printer service is not wired up. An admin needs to check the Worker binding.")
+    }
     if (!res.ok) {
-      throw new Error(UNREACHABLE)
+      throw new Error(`${UNREACHABLE} (HTTP ${res.status})`)
     }
     return readJson<PrinterState>(res)
   } catch (error) {
     if (isAbort(error)) {
       throw new Error("Printer did not respond", { cause: error })
+    }
+    // Keep a message we already chose; only unlabelled failures become UNREACHABLE.
+    if (error instanceof Error && error.message && error.message !== UNREACHABLE) {
+      throw error
     }
     throw new Error(UNREACHABLE, { cause: error })
   }
