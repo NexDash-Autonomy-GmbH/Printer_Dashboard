@@ -26,6 +26,14 @@
     // before namespacing is handed to this address on their first read.
     "LEGACY_RECIPIENTS_OWNER": "alwin@nexdash.com"
   },
+  // Uploaded PDFs wait here until the bridge prints them, then are deleted.
+  // KV caps a value at 25 MB, which is the upload limit the UI enforces too.
+  "kv_namespaces": [
+    {
+      "binding": "PRINT_FILES",
+      "id": "5c857ee3181548c6ab9bfc252126913b"
+    }
+  ],
   "durable_objects": {
     "bindings": [
       {

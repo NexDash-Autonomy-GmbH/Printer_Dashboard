@@ -20,6 +20,7 @@ import {
   DropletIcon,
   ListViewIcon,
   Mail01Icon,
+  PrinterIcon,
   ScanIcon,
 } from "@hugeicons/core-free-icons"
 
@@ -27,9 +28,11 @@ import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
+import { formatWhen } from "@/lib/format"
+import { PrintView } from "@/print/PrintView"
 import { useRecipients } from "@/recipients/context"
 
-type View = "overview" | "scan" | "recipients" | "jobs" | "supplies"
+type View = "overview" | "scan" | "recipients" | "jobs" | "supplies" | "print"
 
 function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
   const value = scanner.toLowerCase()
@@ -66,14 +69,6 @@ function adfView(
     return { state: "idle", label: "ADF empty" }
   }
   return { state: "active", label: "ADF loaded" }
-}
-
-function formatWhen(at: number): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Europe/Berlin",
-  }).format(new Date(at))
 }
 
 // One or two letters matched most of the workspace, so the list opened almost immediately.
@@ -562,6 +557,8 @@ function viewTitle(view: View): string {
       return "Scan jobs"
     case "supplies":
       return "Supplies"
+    case "print":
+      return "Print"
     default: {
       const _never: never = view
       return _never
@@ -581,6 +578,8 @@ function viewSubtitle(view: View): string {
       return "Scans this desk has run."
     case "supplies":
       return "Toner, trays and alerts over SNMP."
+    case "print":
+      return "Drop a PDF and the Xerox prints it. One job at a time, in order."
     default: {
       const _never: never = view
       return _never
@@ -594,8 +593,9 @@ const NAV_ITEMS: MacOSSidebarItem[] = [
   { label: "Scan", icon: ScanIcon },
   { label: "Recipients", icon: Mail01Icon },
   { label: "Scan jobs", icon: ListViewIcon },
+  { label: "Print", icon: PrinterIcon },
 ]
-const NAV_VIEWS: View[] = ["overview", "supplies", "scan", "recipients", "jobs"]
+const NAV_VIEWS: View[] = ["overview", "supplies", "scan", "recipients", "jobs", "print"]
 
 export function RecipientsDashboard() {
   const { actions } = useRecipients()
@@ -666,6 +666,7 @@ export function RecipientsDashboard() {
             {view === "recipients" ? <RecipientsView /> : null}
             {view === "jobs" ? <JobsView /> : null}
             {view === "supplies" ? <SuppliesView /> : null}
+            {view === "print" ? <PrintView /> : null}
           </div>
         </div>
       </MacOSSidebar>
