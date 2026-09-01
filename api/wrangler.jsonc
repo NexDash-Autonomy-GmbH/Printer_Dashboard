@@ -3,10 +3,12 @@
   "name": "printer-api",
   "main": "index.ts",
   "compatibility_date": "2026-08-31",
-  // No public hostname. Access protects printer-dashboard.pages.dev, and the
-  // dashboard reaches this over a Pages service binding, so there is no URL
-  // left that answers without passing Access first.
-  "workers_dev": false,
+  // The ESP8266 bridge polls this hostname directly and cannot do SSO, so it
+  // has to stay reachable — turning it off 404'd /bridge/* and stopped the
+  // printer scanning. Keeping it on no longer reopens /api/*: ACCESS_AUD is
+  // set, so the Worker verifies the Access assertion itself on every /api/*
+  // request rather than relying on the hostname being unreachable.
+  "workers_dev": true,
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1
