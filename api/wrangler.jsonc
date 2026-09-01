@@ -3,7 +3,9 @@
   "name": "printer-api",
   "main": "index.ts",
   "compatibility_date": "2026-08-31",
-  "workers_dev": true,
+  // No public hostname. The dashboard reaches this over a Pages service
+  // binding, so there is no URL that bypasses Cloudflare Access.
+  "workers_dev": false,
   "observability": {
     "enabled": true,
     "head_sampling_rate": 1

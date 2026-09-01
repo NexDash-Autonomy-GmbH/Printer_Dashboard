@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
 
+import { accessConfig, verifyAccess } from "./access";
 import { sendSmtp } from "./smtp";
 
 export type Env = {
@@ -13,6 +14,9 @@ export type Env = {
   BRIDGE_TOKEN: string;
   PRINTER_HOST: string;
   CORS_ORIGINS: string;
+  /* Cloudflare Access. Both must be set or every /api/* route refuses. */
+  ACCESS_TEAM_DOMAIN: string;
+  ACCESS_AUD: string;
 };
 
 type Job = {
@@ -137,6 +141,26 @@ export class PrinterApi extends DurableObject<Env> {
       return new Response(null, { status: 204, headers: corsHeaders(request, this.env) });
     }
     const url = new URL(request.url);
+
+    // /api/* is the human surface and is gated by Cloudflare Access. /bridge/*
+    // is the ESP8266, which cannot do SSO and carries BRIDGE_TOKEN instead.
+    // /health stays open so uptime checks work.
+    if (url.pathname.startsWith("/api/")) {
+      const cfg = accessConfig(this.env);
+      if (!cfg) {
+        // Fail closed. An unconfigured deploy must not serve the printer to
+        // the open internet the way it did before this gate existed.
+        return json(request, this.env, 503, {
+          ok: false,
+          error: "access not configured",
+        });
+      }
+      const verdict = await verifyAccess(request, cfg);
+      if (!verdict.ok) {
+        return json(request, this.env, 403, { ok: false, error: "forbidden" });
+      }
+    }
+
     switch (url.pathname) {
       case "/health":
         return new Response("ok\n", { headers: { "Content-Type": "text/plain" } });
