@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { PdfDropzone } from "@/components/PdfDropzone"
+import { PrintingAnimation } from "@/components/PrintingAnimation"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import {
@@ -185,9 +186,10 @@ export function PrintView() {
   }, [])
 
   const jobs = queue?.jobs ?? []
-  const live = jobs.filter((j) => j.status === "queued" || j.status === "printing")
+  const nowPrinting = jobs.find((j) => j.status === "printing") ?? null
+  const live = jobs.filter((j) => j.status === "queued")
   const history = jobs.filter((j) => j.status === "done" || j.status === "failed").slice(-8).reverse()
-  const someoneElsePrinting = live.some((j) => j.status === "printing" && !j.mine)
+  const someoneElsePrinting = nowPrinting !== null && !nowPrinting.mine
   const myQueued = live.filter((j) => j.mine && j.status === "queued")
   const bridgeOffline = queue !== null && !queue.bridge_online
 
@@ -209,10 +211,27 @@ export function PrintView() {
         </Alert>
       ) : null}
 
+      {nowPrinting ? (
+        <section
+          aria-live="polite"
+          className="border-border bg-card flex items-center gap-5 rounded-2xl border p-5"
+        >
+          <PrintingAnimation className="size-24 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-primary text-xs font-semibold tracking-wide uppercase">Now printing</p>
+            <p className="text-foreground mt-1 truncate text-base font-semibold">{nowPrinting.name}</p>
+            <p className="text-muted-foreground mt-0.5 text-sm">
+              {ownerLabel(nowPrinting)} · {formatBytes(nowPrinting.size)}
+              {nowPrinting.mine ? "" : " · yours starts when this finishes"}
+            </p>
+          </div>
+        </section>
+      ) : null}
+
       {someoneElsePrinting && myQueued.length > 0 ? (
         <Alert>
           <AlertTitle>
-            {ownerLabel(live.find((j) => j.status === "printing")!)} is printing — you are #
+            {ownerLabel(nowPrinting!)} is printing — you are #
             {myQueued[0].position} in line
           </AlertTitle>
           <AlertDescription>
@@ -232,7 +251,7 @@ export function PrintView() {
             <span className="text-muted-foreground text-xs">Uploading {uploading}…</span>
           ) : null}
         </div>
-        {live.length === 0 ? (
+        {live.length === 0 && !nowPrinting ? (
           <Empty className="border-border bg-card/40 min-h-40 rounded-2xl border">
             <EmptyHeader>
               <EmptyTitle>Nothing waiting</EmptyTitle>
