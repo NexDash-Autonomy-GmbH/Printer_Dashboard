@@ -372,17 +372,19 @@ function OverviewView() {
               NexDash office · {state.model}
             </p>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="border-border bg-muted/40 flex flex-wrap items-center gap-2.5 rounded-full border px-3 py-1.5">
             <StatusIndicator
               size="sm"
               state={online ? "active" : "down"}
               label={online ? "Online" : "Offline"}
             />
+            <Separator orientation="vertical" className="h-4" />
             <StatusIndicator
               size="sm"
               state={scannerState(state.scanner)}
               label={capitalize(state.scanner)}
             />
+            <Separator orientation="vertical" className="h-4" />
             <StatusIndicator size="sm" state={adf.state} label={adf.label} />
           </div>
         </header>
