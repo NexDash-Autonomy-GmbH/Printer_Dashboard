@@ -48,16 +48,12 @@ export type ScanResult = {
   log?: string[]
 }
 
-const PRODUCTION_API = "https://printer-api.nexdash.workers.dev"
-
-// Switch to same-origin ("" here, served by the Pages Function) once Cloudflare
-// Access and the service binding are in place: Access sets its cookie per
-// hostname, so the credential has to be first-party to reach the Worker.
+// Same origin. /api/* is served by a Pages Function that forwards to the Worker
+// over a service binding, so Access protects the API with the same first-party
+// session as the page. Calling the Worker's own hostname would need a
+// third-party cookie, which Safari blocks outright.
 function apiBase(): string {
-  const raw = (import.meta.env.VITE_API_BASE as string | undefined)?.trim().replace(/\/$/, "") ?? ""
-  if (raw) return raw
-  if (import.meta.env.PROD) return PRODUCTION_API
-  return ""
+  return (import.meta.env.VITE_API_BASE as string | undefined)?.trim().replace(/\/$/, "") ?? ""
 }
 
 function url(path: string): string {
