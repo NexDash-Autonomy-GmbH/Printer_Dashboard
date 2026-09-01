@@ -19,6 +19,8 @@ void setup() {
   delay(200);
   Serial.println();
   Serial.println("nexdash-bridge boot");
+  // TLS is CPU-bound on this chip; the relay rate roughly tracks this number.
+  Serial.printf("cpu %u MHz\n", ESP.getCpuFreqMHz());
   if (!LittleFS.begin()) {
     LittleFS.format();
     LittleFS.begin();
@@ -363,12 +365,16 @@ bool streamPrintJob(const String &job, const String &printer) {
     postPrintResult(job, "printer%20refused%20port%209100");
     return false;
   }
+  // Ship each chunk as soon as it lands rather than letting Nagle hold it.
+  tcp.setNoDelay(true);
 
   WiFiClient *stream = http.getStreamPtr();
   int total = http.getSize();  // -1 when the server sends no Content-Length
-  uint8_t buf[512];
+  // One full TCP segment per write. Static so it is not on the 4 KB task stack.
+  static uint8_t buf[1460];
   long sent = 0;
   uint32_t idleSince = millis();
+  uint32_t started = millis();
   while (http.connected() && (total < 0 || sent < total)) {
     size_t avail = stream->available();
     if (avail) {
@@ -389,9 +395,13 @@ bool streamPrintJob(const String &job, const String &printer) {
       if (millis() - idleSince > 8000) {
         break;
       }
-      delay(1);
+      yield();
     }
-    yield();
+  }
+  uint32_t ms = millis() - started;
+  if (ms > 0) {
+    // Logged so the real relay rate is known the first time this runs.
+    Serial.printf("relay %ld bytes in %lu ms (%lu KB/s)\n", sent, (unsigned long)ms, (unsigned long)(sent / ms));
   }
   tcp.flush();
   tcp.stop();
