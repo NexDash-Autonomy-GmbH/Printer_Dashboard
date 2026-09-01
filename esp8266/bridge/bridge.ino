@@ -1,5 +1,6 @@
 // ESP8266EX firmware (this board is not an ESP32).
-// Joins office Wi-Fi, long-polls the Go API, scans the Xerox over eSCL.
+// Joins office Wi-Fi, long-polls the Worker, scans the Xerox over eSCL and
+// streams queued PDFs into it on port 9100.
 // PDFs are written to LittleFS in 512-byte chunks. A String cannot hold a scan.
 
 #include <ESP8266WiFi.h>
@@ -18,6 +19,8 @@ void setup() {
   delay(200);
   Serial.println();
   Serial.println("nexdash-bridge boot");
+  // TLS is CPU-bound on this chip; the relay rate roughly tracks this number.
+  Serial.printf("cpu %u MHz\n", ESP.getCpuFreqMHz());
   if (!LittleFS.begin()) {
     LittleFS.format();
     LittleFS.begin();
@@ -275,8 +278,8 @@ void postError(String resultUrl, const char *encoded) {
 
 static uint32_t lastTelemetry = 0;
 
-void postTelemetry(const String &printer) {
-  if (millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
+void postTelemetry(const String &printer, bool force = false) {
+  if (!force && millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
     return;
   }
   lastTelemetry = millis();
@@ -323,6 +326,155 @@ void postTelemetry(const String &printer) {
   Serial.println(online ? status : "offline");
 }
 
+// ---- print queue -----------------------------------------------------------
+// Pulls the next queued PDF from the Worker and streams it straight into the
+// Xerox on port 9100. Never holds the file: 80 KB of RAM against PDFs up to
+// 25 MB, so it is a relay, chunk in and chunk out.
+static const uint16_t RAW_PRINT_PORT = 9100;
+
+static const char *HR_DEVICE_STATUS = "1.3.6.1.2.1.25.3.5.1.1.1";  // 3 idle, 4 printing, 5 warmup
+
+bool printerBusy(const String &printer) {
+  int st = snmpInt(printer.c_str(), HR_DEVICE_STATUS);
+  return st == 4 || st == 5;
+}
+
+// Once the bytes are in, stay with the job until the Xerox says it is done, so
+// "printing" on the dashboard means paper moving and the next job waits for the
+// real finish. Status is posted every pass so the page sees Printing within
+// seconds instead of on the minute.
+void waitForPrinter(const String &printer) {
+  uint32_t start = millis();
+  bool sawPrinting = false;
+  int idleRuns = 0;
+  while (millis() - start < 5UL * 60UL * 1000UL) {
+    int st = snmpInt(printer.c_str(), HR_DEVICE_STATUS);
+    if (st == 4 || st == 5) {
+      sawPrinting = true;
+      idleRuns = 0;
+    } else if (st == 3) {
+      idleRuns++;
+      // Seen it print and now idle: done. Never saw it print for ~12 s: a tiny
+      // job finished between polls, also done.
+      if (sawPrinting || idleRuns >= 4) {
+        break;
+      }
+    }
+    postTelemetry(printer, true);
+    delay(3000);
+    yield();
+  }
+  postTelemetry(printer, true);
+}
+
+void postPrintResult(const String &job, const char *encodedError) {
+  String url = String(API_BASE) + "/bridge/print/result?job=" + job;
+  if (encodedError && encodedError[0]) {
+    url += String("&error=") + encodedError;
+  }
+  String unused;
+  httpPostBytes(url, "text/plain", NULL, 0, unused, true);
+}
+
+bool streamPrintJob(const String &job, const String &printer) {
+  HTTPClient http;
+  http.setTimeout(180000);
+  BearSSL::WiFiClientSecure client;
+  client.setInsecure();
+  String url = String(API_BASE) + "/bridge/print/file?job=" + job;
+  if (!http.begin(client, url)) {
+    postPrintResult(job, "file%20request%20failed");
+    return false;
+  }
+  addAuth(http);
+  int code = http.GET();
+  if (code != 200) {
+    http.end();
+    postPrintResult(job, "file%20unavailable");
+    return false;
+  }
+
+  WiFiClient tcp;
+  if (!tcp.connect(printer.c_str(), RAW_PRINT_PORT)) {
+    http.end();
+    postPrintResult(job, "printer%20refused%20port%209100");
+    return false;
+  }
+  // Ship each chunk as soon as it lands rather than letting Nagle hold it.
+  tcp.setNoDelay(true);
+
+  WiFiClient *stream = http.getStreamPtr();
+  int total = http.getSize();  // -1 when the server sends no Content-Length
+  // One full TCP segment per write. Static so it is not on the 4 KB task stack.
+  static uint8_t buf[1460];
+  long sent = 0;
+  uint32_t idleSince = millis();
+  uint32_t started = millis();
+  while (http.connected() && (total < 0 || sent < total)) {
+    size_t avail = stream->available();
+    if (avail) {
+      size_t chunk = avail > sizeof(buf) ? sizeof(buf) : avail;
+      int n = stream->readBytes(buf, chunk);
+      if (n <= 0) {
+        break;
+      }
+      if (tcp.write(buf, n) != (size_t)n) {
+        tcp.stop();
+        http.end();
+        postPrintResult(job, "printer%20stopped%20accepting%20data");
+        return false;
+      }
+      sent += n;
+      idleSince = millis();
+    } else {
+      if (millis() - idleSince > 8000) {
+        break;
+      }
+      yield();
+    }
+  }
+  uint32_t ms = millis() - started;
+  if (ms > 0) {
+    // Logged so the real relay rate is known the first time this runs.
+    Serial.printf("relay %ld bytes in %lu ms (%lu KB/s)\n", sent, (unsigned long)ms, (unsigned long)(sent / ms));
+  }
+  waitForPrinter(printer);
+  tcp.flush();
+  tcp.stop();
+  http.end();
+  if (total > 0 && sent < total) {
+    postPrintResult(job, "transfer%20incomplete");
+    return false;
+  }
+  if (sent <= 4) {
+    postPrintResult(job, "empty%20file");
+    return false;
+  }
+  Serial.printf("printed %ld bytes\n", sent);
+  postPrintResult(job, "");
+  return true;
+}
+
+/** Ask for the next print job. Returns true if one was handled, so the caller skips telemetry this pass. */
+bool checkPrintQueue(const String &printer) {
+  // Someone may be printing straight from a laptop. Do not pile a job on top.
+  if (printerBusy(printer)) {
+    return false;
+  }
+  String body;
+  int code = httpGetSmall(String(API_BASE) + "/bridge/print/next", body, true);
+  if (code != 200) {
+    return false;
+  }
+  String job = jsonField(body, "job");
+  if (job.length() == 0) {
+    return false;
+  }
+  Serial.print("print job ");
+  Serial.println(job);
+  return streamPrintJob(job, printer);
+}
+
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("wifi reconnect");
@@ -345,7 +497,10 @@ void loop() {
     if (printer.length() == 0) {
       printer = "192.168.68.52";
     }
-    postTelemetry(printer);
+    // No scan waiting. A print job, if any, takes this pass; telemetry otherwise.
+    if (!checkPrintQueue(printer)) {
+      postTelemetry(printer);
+    }
     return;
   }
   String source = jsonField(body, "source");
