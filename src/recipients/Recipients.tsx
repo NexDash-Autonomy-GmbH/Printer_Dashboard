@@ -9,6 +9,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty"
+import { AccountMenu } from "@/components/AccountMenu"
 import { AnimatedButton } from "@/components/ui/animated-button"
 import { FluidTabs, type FluidTabItem } from "@/components/ui/fluid-tabs"
 import { Separator } from "@/components/ui/separator"
@@ -642,6 +643,7 @@ export function RecipientsDashboard() {
                 borderLightColor="#DDD"
               />
               </div>
+              <AccountMenu />
             </div>
             <hr aria-hidden="true" className="border-border" />
           </header>
