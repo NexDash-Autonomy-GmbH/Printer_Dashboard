@@ -251,7 +251,10 @@ function ScanSourceToggle() {
 
 function RecipientsScan() {
   const { state, actions } = useRecipients()
-  const [pending, startTransition] = useTransition()
+  // No startTransition here. In React 19 an async transition is an Action, and
+  // state set inside one is held until the action settles — so jobStatus never
+  // became "scanning" while the scan ran, and everything keyed off it (the job
+  // banner, the progress dialog) stayed dark for the whole job.
   const feederEmpty =
     state.source === "adf" && adfView(state.scanner, state.adf).label === "ADF empty"
   const label =
@@ -267,18 +270,18 @@ function RecipientsScan() {
     <AnimatedButton
       size="lg"
       className="w-full"
-      disabled={pending || state.jobStatus === "scanning" || feederEmpty}
+      disabled={state.jobStatus === "scanning" || feederEmpty}
       onClick={() => {
-        startTransition(async () => {
+        void (async () => {
           try {
             await actions.scan()
           } catch (error) {
             toast.error(error instanceof Error ? error.message : "Scan failed")
           }
-        })
+        })()
       }}
     >
-      {pending || state.jobStatus === "scanning" ? (
+      {state.jobStatus === "scanning" ? (
         <Spinner data-icon="inline-start" />
       ) : null}
       {label}
