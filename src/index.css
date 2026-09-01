@@ -63,6 +63,9 @@
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
+    --color-status-ok: var(--status-ok);
+    --color-status-warn: var(--status-warn);
+    --color-status-down: var(--status-down);
     --font-heading: var(--font-sans);
     --font-sans: "Instrument Sans", "Instrument Sans Fallback", sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
@@ -110,72 +113,80 @@
 }
 
 :root {
-    --background: oklch(0.965 0.004 250);
-    --foreground: oklch(0.22 0.02 255);
-    --card: oklch(0.99 0.002 250);
-    --card-foreground: oklch(0.22 0.02 255);
-    --popover: oklch(0.99 0.002 250);
-    --popover-foreground: oklch(0.22 0.02 255);
-    --primary: oklch(0.5 0.195 25);
-    --primary-foreground: oklch(0.99 0.005 95);
-    --secondary: oklch(0.935 0.006 250);
-    --secondary-foreground: oklch(0.22 0.02 255);
-    --muted: oklch(0.94 0.005 250);
-    --muted-foreground: oklch(0.4 0.02 255);
-    --accent: oklch(0.93 0.008 250);
-    --accent-foreground: oklch(0.22 0.02 255);
-    --destructive: oklch(0.5 0.195 25);
-    --border: oklch(0.86 0.01 250);
-    --input: oklch(0.86 0.01 250);
-    --ring: oklch(0.5 0.195 25);
-    --chart-1: oklch(0.5 0.195 25);
-    --chart-2: oklch(0.55 0.03 250);
-    --chart-3: oklch(0.4 0.025 255);
-    --chart-4: oklch(0.32 0.02 255);
-    --chart-5: oklch(0.24 0.02 255);
+    /* NexDash palette, ported from NexOS frontend/src/index.css (HSL -> oklch). */
+    --background: oklch(1 0 0);
+    --foreground: oklch(0 0 0);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0 0 0);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0 0 0);
+    --primary: oklch(0.571 0.108 165.6);
+    --primary-foreground: oklch(1 0 0);
+    --secondary: oklch(0.968 0.007 247.9);
+    --secondary-foreground: oklch(0 0 0);
+    --muted: oklch(0.968 0.007 247.9);
+    --muted-foreground: oklch(0.555 0.041 257.4);
+    --accent: oklch(0.929 0.013 255.5);
+    --accent-foreground: oklch(0 0 0);
+    --destructive: oklch(0.637 0.208 25.3);
+    --border: oklch(0.929 0.013 255.5);
+    --input: oklch(0.929 0.013 255.5);
+    --ring: oklch(0.571 0.108 165.6);
+    --status-ok: oklch(0.571 0.108 165.6);
+    --status-warn: oklch(0.68 0.155 70);
+    --status-down: oklch(0.637 0.208 25.3);
+    --chart-1: oklch(0.571 0.108 165.6);
+    --chart-2: oklch(0.555 0.041 257.4);
+    --chart-3: oklch(0.44 0.035 257);
+    --chart-4: oklch(0.33 0.028 257);
+    --chart-5: oklch(0.22 0.02 257);
     --radius: 0.4rem;
-    --sidebar: oklch(0.94 0.005 250);
-    --sidebar-foreground: oklch(0.22 0.02 255);
-    --sidebar-primary: oklch(0.5 0.195 25);
-    --sidebar-primary-foreground: oklch(0.99 0.005 95);
-    --sidebar-accent: oklch(0.9 0.008 250);
-    --sidebar-accent-foreground: oklch(0.22 0.02 255);
-    --sidebar-border: oklch(0.86 0.01 250);
-    --sidebar-ring: oklch(0.5 0.195 25);
+    --sidebar: oklch(0.968 0.007 247.9);
+    --sidebar-foreground: oklch(0 0 0);
+    --sidebar-primary: oklch(0.571 0.108 165.6);
+    --sidebar-primary-foreground: oklch(1 0 0);
+    --sidebar-accent: oklch(0.929 0.013 255.5);
+    --sidebar-accent-foreground: oklch(0 0 0);
+    --sidebar-border: oklch(0.929 0.013 255.5);
+    --sidebar-ring: oklch(0.571 0.108 165.6);
 }
 
 .dark {
-    --background: oklch(0.17 0.015 255);
-    --foreground: oklch(0.95 0.01 95);
-    --card: oklch(0.22 0.016 255);
-    --card-foreground: oklch(0.95 0.01 95);
-    --popover: oklch(0.22 0.016 255);
-    --popover-foreground: oklch(0.95 0.01 95);
-    --primary: oklch(0.64 0.18 25);
-    --primary-foreground: oklch(0.17 0.015 255);
-    --secondary: oklch(0.26 0.016 255);
-    --secondary-foreground: oklch(0.95 0.01 95);
-    --muted: oklch(0.26 0.016 255);
-    --muted-foreground: oklch(0.74 0.015 250);
-    --accent: oklch(0.28 0.018 255);
-    --accent-foreground: oklch(0.95 0.01 95);
-    --destructive: oklch(0.68 0.17 25);
+    --background: oklch(0.107 0.012 261.1);
+    --foreground: oklch(0.984 0.003 247.9);
+    --card: oklch(0.136 0.016 262.7);
+    --card-foreground: oklch(0.984 0.003 247.9);
+    --popover: oklch(0.136 0.016 262.7);
+    --popover-foreground: oklch(0.984 0.003 247.9);
+    --primary: oklch(0.643 0.123 165.4);
+    /* NexOS puts near-white on this green (2.99:1). Dark ink reads 6.22:1 on the same brand colour. */
+    --primary-foreground: oklch(0.16 0.014 262);
+    --secondary: oklch(0.275 0.036 259.7);
+    --secondary-foreground: oklch(0.984 0.003 247.9);
+    --muted: oklch(0.275 0.036 259.7);
+    --muted-foreground: oklch(0.71 0.035 256.8);
+    --accent: oklch(0.177 0.029 265.8);
+    --accent-foreground: oklch(0.984 0.003 247.9);
+    --destructive: oklch(0.636 0.208 25.4);
     --border: oklch(1 0 0 / 12%);
     --input: oklch(1 0 0 / 14%);
-    --ring: oklch(0.64 0.18 25);
-    --chart-1: oklch(0.64 0.18 25);
-    --chart-2: oklch(0.7 0.025 250);
-    --chart-3: oklch(0.5 0.02 255);
-    --chart-4: oklch(0.4 0.016 255);
-    --chart-5: oklch(0.32 0.016 255);
-    --sidebar: oklch(0.14 0.016 255);
-    --sidebar-foreground: oklch(0.96 0.006 95);
-    --sidebar-primary: oklch(0.64 0.18 25);
-    --sidebar-primary-foreground: oklch(0.17 0.015 255);
-    --sidebar-accent: oklch(0.24 0.018 255);
-    --sidebar-accent-foreground: oklch(0.97 0.006 95);
+    --ring: oklch(0.643 0.123 165.4);
+    --status-ok: oklch(0.643 0.123 165.4);
+    --status-warn: oklch(0.75 0.15 70);
+    --status-down: oklch(0.636 0.208 25.4);
+    --chart-1: oklch(0.643 0.123 165.4);
+    --chart-2: oklch(0.71 0.035 256.8);
+    --chart-3: oklch(0.55 0.03 257);
+    --chart-4: oklch(0.42 0.028 259);
+    --chart-5: oklch(0.31 0.03 260);
+    --sidebar: oklch(0.107 0.012 261.1);
+    --sidebar-foreground: oklch(0.984 0.003 247.9);
+    --sidebar-primary: oklch(0.643 0.123 165.4);
+    --sidebar-primary-foreground: oklch(0.16 0.014 262);
+    --sidebar-accent: oklch(0.177 0.029 265.8);
+    --sidebar-accent-foreground: oklch(0.984 0.003 247.9);
     --sidebar-border: oklch(1 0 0 / 10%);
-    --sidebar-ring: oklch(0.64 0.18 25);
+    --sidebar-ring: oklch(0.643 0.123 165.4);
 }
 
 @layer base {

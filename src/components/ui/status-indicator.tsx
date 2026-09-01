@@ -11,11 +11,11 @@ interface StatusIndicatorProps {
 const getStateColors = (state: StatusIndicatorProps["state"]) => {
   switch (state) {
     case "active":
-      return { dot: "bg-emerald-500", ping: "bg-emerald-400" }
+      return { dot: "bg-status-ok", ping: "bg-status-ok/60" }
     case "down":
-      return { dot: "bg-red-500", ping: "bg-red-400" }
+      return { dot: "bg-status-down", ping: "bg-status-down/60" }
     case "fixing":
-      return { dot: "bg-amber-500", ping: "bg-amber-400" }
+      return { dot: "bg-status-warn", ping: "bg-status-warn/60" }
     case "idle":
     default:
       return { dot: "bg-muted-foreground/50", ping: "bg-muted-foreground/30" }
