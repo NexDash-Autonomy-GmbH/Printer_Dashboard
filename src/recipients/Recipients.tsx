@@ -10,6 +10,7 @@ import {
   EmptyTitle,
 } from "@/components/ui/empty"
 import { AnimatedButton } from "@/components/ui/animated-button"
+import { Separator } from "@/components/ui/separator"
 import {
   DashboardSquare01Icon,
   DropletIcon,
@@ -628,10 +629,11 @@ export function RecipientsDashboard() {
                   </p>
                 </div>
               </div>
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="border-border bg-muted/50 flex shrink-0 items-center gap-1.5 rounded-full border p-1.5">
               <AnimatedButton type="button" variant="outline" onClick={() => void actions.refresh()}>
                 Refresh
               </AnimatedButton>
+              <Separator orientation="vertical" className="my-1 self-stretch" />
               <SwitchMode
                 width={72}
                 height={36}
