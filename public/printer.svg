@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <title>Xerox B305</title>
+  <!--
+    Chrome and Safari render an SVG favicon's first frame and do not animate it;
+    Firefox animates. So frame one already shows a page part-way out — the icon
+    has to read as "printing" standing still, and the motion is a bonus.
+    Green is the NexDash accent, hsl(160 61% 40%).
+  -->
+  <defs>
+    <clipPath id="above-slot">
+      <!-- Keeps the sheet from drawing over the case as it rises. -->
+      <rect x="0" y="0" width="64" height="34" />
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#above-slot)">
+    <g transform="translate(0 6)">
+      <rect x="17" y="8" width="30" height="26" rx="2" fill="#ffffff" stroke="#0d1117" stroke-width="3" />
+      <path d="M23 17h18M23 24h18M23 31h11" stroke="#0d1117" stroke-width="3" stroke-linecap="round" />
+      <animateTransform attributeName="transform" type="translate"
+        values="0 20; 0 0; 0 0; 0 20" keyTimes="0; 0.4; 0.72; 1"
+        dur="3s" repeatCount="indefinite" calcMode="spline"
+        keySplines="0.22 1 0.36 1; 0 0 1 1; 0.65 0 0.35 1" />
+    </g>
+  </g>
+
+  <!-- body -->
+  <rect x="6" y="33" width="52" height="24" rx="6" fill="#28a47d" stroke="#0d1117" stroke-width="3" />
+  <!-- feed slot -->
+  <rect x="16" y="31" width="32" height="5" rx="2.5" fill="#0d1117" />
+  <!-- status lamp -->
+  <circle cx="15" cy="45" r="3.5" fill="#0d1117">
+    <animate attributeName="opacity" values="1; 0.2; 1" dur="1.4s" repeatCount="indefinite" />
+  </circle>
+  <!-- output tray -->
+  <rect x="20" y="50" width="28" height="10" rx="2" fill="#ffffff" stroke="#0d1117" stroke-width="3" />
+</svg>
