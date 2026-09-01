@@ -1,0 +1,20 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  // Config for the PAGES project (the dashboard). The Worker has its own at
+  // api/wrangler.jsonc and is deployed with an explicit -c, so the two do not
+  // collide.
+  //
+  // The service binding lives here rather than in the dashboard because a
+  // `wrangler pages deploy` wipes bindings it does not declare. It was set by
+  // API, verified, and then silently cleared by the next CI deploy — which is
+  // what made /api/* answer 503 "printer worker binding missing".
+  "name": "printer-dashboard",
+  "pages_build_output_dir": "dist",
+  "compatibility_date": "2026-09-01",
+  "services": [
+    {
+      "binding": "PRINTER_WORKER",
+      "service": "printer-api"
+    }
+  ]
+}
