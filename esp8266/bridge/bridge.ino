@@ -8,8 +8,43 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecureBearSSL.h>
 #include <LittleFS.h>
+#include <Ticker.h>
 #include "secrets.h"
 #include "snmp.h"
+
+// ---- status LED ------------------------------------------------------------
+// The onboard LED is GPIO2 and active LOW. It is driven off a timer rather than
+// from loop(), because loop() spends most of its life parked in a 20-second
+// long-poll; a light driven from there would sit still for 20 seconds at a time
+// and tell you nothing. On a timer, a still LED means the board is dead or
+// unpowered, and nothing else.
+//
+// One 100 ms step per bit, so each pattern is a 1.6 s cycle. The rhythms form a
+// ladder you can read across a room: solid means idle, and the busier the board
+// is the faster it blinks. Dark-with-a-blip is the only unhappy one.
+static const uint8_t STATUS_LED = LED_BUILTIN;
+static const uint16_t LED_IDLE       = 0b1111111111111111;  // solid: powered, online, nothing to do
+static const uint16_t LED_SCANNING   = 0b1111111100000000;  // slow, 800 on 800 off
+static const uint16_t LED_PRINTING   = 0b1111000011110000;  // medium, 400 on 400 off
+static const uint16_t LED_CONNECTING = 0b1010101010101010;  // fast, joining Wi-Fi
+static const uint16_t LED_OFFLINE    = 0b1000000000000000;  // a blip in the dark: no Wi-Fi
+
+static Ticker statusTicker;
+static volatile uint16_t ledPattern = LED_CONNECTING;
+static volatile uint8_t ledStep = 0;
+
+void tickStatusLed() {
+  bool on = (ledPattern >> (15 - ledStep)) & 1;
+  digitalWrite(STATUS_LED, on ? LOW : HIGH);  // active LOW
+  ledStep = (ledStep + 1) & 15;
+}
+
+void setLedPattern(uint16_t pattern) {
+  if (ledPattern != pattern) {
+    ledPattern = pattern;
+    ledStep = 0;
+  }
+}
 
 static const char *SCAN_PATH = "/scan.pdf";
 static const int MAX_PDF_BYTES = 1500000;
@@ -19,6 +54,11 @@ void setup() {
   delay(200);
   Serial.println();
   Serial.println("nexdash-bridge boot");
+  // Started before anything that can block, so the light proves power even if
+  // Wi-Fi never comes up.
+  pinMode(STATUS_LED, OUTPUT);
+  setLedPattern(LED_CONNECTING);
+  statusTicker.attach_ms(100, tickStatusLed);
   // TLS is CPU-bound on this chip; the relay rate roughly tracks this number.
   Serial.printf("cpu %u MHz\n", ESP.getCpuFreqMHz());
   if (!LittleFS.begin()) {
@@ -38,9 +78,11 @@ void setup() {
   }
   Serial.println();
   if (WiFi.status() == WL_CONNECTED) {
+    setLedPattern(LED_IDLE);
     Serial.print("ip ");
     Serial.println(WiFi.localIP());
   } else {
+    setLedPattern(LED_OFFLINE);
     Serial.println("wifi failed");
   }
 }
@@ -470,6 +512,7 @@ bool checkPrintQueue(const String &printer) {
   if (job.length() == 0) {
     return false;
   }
+  setLedPattern(LED_PRINTING);
   Serial.print("print job ");
   Serial.println(job);
   return streamPrintJob(job, printer);
@@ -477,12 +520,14 @@ bool checkPrintQueue(const String &printer) {
 
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
+    setLedPattern(LED_OFFLINE);
     Serial.println("wifi reconnect");
     WiFi.begin(WIFI_SSID, WIFI_PASS);
     delay(3000);
     return;
   }
 
+  setLedPattern(LED_IDLE);
   String pollUrl = String(API_BASE) + "/bridge/poll";
   String body;
   int code = httpGetSmall(pollUrl, body, true);
@@ -508,6 +553,7 @@ void loop() {
   if (printer.length() == 0) {
     printer = "192.168.68.52";
   }
+  setLedPattern(LED_SCANNING);
   Serial.print("job ");
   Serial.println(job);
 
