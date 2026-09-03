@@ -17,6 +17,9 @@ export type Env = {
   /* Cloudflare Access. Both must be set or every /api/* route refuses. */
   ACCESS_TEAM_DOMAIN: string;
   ACCESS_AUD: string;
+  /* Local development only, set in .dev.vars, which is never deployed.
+     Lets an unauthenticated caller through when Access is absent. */
+  ALLOW_ANONYMOUS_DEV?: string;
   /* Who owned the single shared recipient list before it was namespaced. */
   LEGACY_RECIPIENTS_OWNER: string;
   /* Uploaded PDFs, keyed print:<job id>. Deleted once the job finishes. */
@@ -139,12 +142,6 @@ function withoutSender(list: string[], sender: string): string[] {
 }
 
 /** Anything that changes state or physically drives the printer. */
-function mutates(request: Request, url: URL): boolean {
-  if (url.pathname === "/api/scan") {
-    return true;
-  }
-  return request.method !== "GET" && request.method !== "HEAD";
-}
 
 /**
  * Answering before a request body has been read leaves the stream dangling,
@@ -202,15 +199,16 @@ export class PrinterApi extends DurableObject<Env> {
           return json(request, this.env, 403, { ok: false, error: "forbidden" });
         }
         actor = verdict.email.trim().toLowerCase();
-      } else if (mutates(request, url)) {
-        // Access is not configured yet, so nobody is authenticated. Reads stay
-        // open to keep the dashboard usable, but nothing that adds a recipient
-        // or moves paper runs for an anonymous caller: those two chained
-        // together are what let a stranger scan the feeder and mail it out.
+      } else if (this.env.ALLOW_ANONYMOUS_DEV !== "1") {
+        // No Access config means nobody can be identified. That is a broken
+        // deployment, not a public one, so refuse the whole surface rather
+        // than let reads through: /api/state and /api/emails carry the
+        // printer's state and every recipient address somebody saved.
+        // Local development opts out through .dev.vars, which never ships.
         await discardBody(request);
-        return json(request, this.env, 403, {
+        return json(request, this.env, 503, {
           ok: false,
-          error: "sign-in required for this action",
+          error: "authentication is not configured on this server",
         });
       }
     }
