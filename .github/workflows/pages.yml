@@ -1,33 +1,29 @@
 name: cloudflare-pages
 
-# Manual trigger only, and deliberately so.
+# Deploys on every push to main. This is the only automation the project has:
+# the Cloudflare Pages project is direct-upload ("source": null in the API), not
+# connected to this repository, so nothing deploys unless this workflow runs.
 #
-# This ran on every push to main until GitHub Actions stopped starting jobs on
-# this account: "The job was not started because recent account payments have
-# failed or your spending limit needs to be increased." The block is at account
-# level, so the job never starts and no step ever runs -- nothing in this file
-# can catch it or work around it. Left on a push trigger it simply painted a red
-# cross on every merge while deploying nothing.
+# It currently fails, and not because of anything in this file. GitHub is
+# refusing to start jobs on this account -- "recent account payments have failed
+# or your spending limit needs to be increased" -- so the job never begins and
+# no step runs. Fix the Actions billing or spending limit and this goes green
+# again with no edit here. A failed run is honest signal that main did not
+# deploy, which is worth more than a clean history that hides it.
 #
-# Deploys are done by hand in the meantime:
+# To deploy by hand in the meantime:
 #
 #   npm run build
 #   npx wrangler pages deploy          # reads ./wrangler.jsonc
 #   npx wrangler deploy -c api/wrangler.jsonc
 #
-# Use the root config, not a bare "pages deploy dist". A direct-upload deploy
+# Use the root config, never a bare "pages deploy dist". A direct-upload deploy
 # replaces the bindings it does not declare, and the PRINTER_WORKER service
-# binding lives in ./wrangler.jsonc precisely so it survives one. Without it
-# the dashboard's /api/* returns 503.
-#
-# Once the billing problem is resolved, restore automatic deploys by putting
-# the push trigger back:
-#
-#   on:
-#     push:
-#       branches: [main]
-#     workflow_dispatch:
+# binding lives in ./wrangler.jsonc precisely so it survives one. Without it the
+# dashboard's /api/* returns 503, which has happened here before.
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
