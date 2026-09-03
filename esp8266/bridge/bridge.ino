@@ -49,6 +49,9 @@ void setLedPattern(uint16_t pattern) {
 
 static const char *SCAN_PATH = "/scan.pdf";
 static const int MAX_PDF_BYTES = 1500000;
+// The printer can stall mid-document while it renders the next band. Eight
+// seconds was cutting scans short; a stall this long is a real fault.
+static const uint32_t SCAN_IDLE_TIMEOUT_MS = 25000;
 
 void setup() {
   Serial.begin(115200);
@@ -69,6 +72,15 @@ void setup() {
   if (!LittleFS.begin()) {
     LittleFS.format();
     LittleFS.begin();
+  }
+  {
+    // The scan is buffered to LittleFS before it is pushed on, so this number
+    // is the real ceiling on a scan and worth stating rather than assuming.
+    FSInfo info;
+    if (LittleFS.info(info)) {
+      Serial.printf("fs: %u bytes total, %u used\n",
+                    (unsigned)info.totalBytes, (unsigned)info.usedBytes);
+    }
   }
   WiFi.mode(WIFI_STA);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
@@ -240,11 +252,20 @@ bool downloadToFile(String url, const char *path) {
     http.end();
     return false;
   }
+  // -1 when the printer sends no Content-Length, which it usually does not:
+  // it streams the PDF while still rendering it.
+  const int expected = http.getSize();
   WiFiClient *stream = http.getStreamPtr();
   uint8_t buf[512];
   int written = 0;
+  bool hitCap = false;
+  bool wentQuiet = false;
   uint32_t idleSince = millis();
-  while (http.connected() && written < MAX_PDF_BYTES) {
+  while (http.connected()) {
+    if (written >= MAX_PDF_BYTES) {
+      hitCap = true;
+      break;
+    }
     size_t avail = stream->available();
     if (avail) {
       size_t chunk = avail;
@@ -263,7 +284,10 @@ bool downloadToFile(String url, const char *path) {
       written += n;
       idleSince = millis();
     } else {
-      if (millis() - idleSince > 8000) {
+      // The printer renders as it sends and can pause mid-document, so this
+      // is deliberately patient. Running out is still a failure, not an end.
+      if (millis() - idleSince > SCAN_IDLE_TIMEOUT_MS) {
+        wentQuiet = true;
         break;
       }
       delay(1);
@@ -272,7 +296,30 @@ bool downloadToFile(String url, const char *path) {
   }
   f.close();
   http.end();
-  return written > 4;
+
+  // Anything short of the whole document is a corrupt PDF, and a corrupt PDF
+  // that reports success gets emailed. This used to `return written > 4`,
+  // which called every truncation a win: a scan over the cap arrived as a
+  // page that renders cleanly at the top and dissolves into colour bands
+  // where the JPEG stream was cut.
+  if (written <= 4) {
+    Serial.println("scan: nothing arrived");
+    return false;
+  }
+  if (hitCap) {
+    Serial.printf("scan: hit the %d byte cap, refusing to send a truncated pdf\n", MAX_PDF_BYTES);
+    return false;
+  }
+  if (wentQuiet) {
+    Serial.printf("scan: printer went quiet after %d bytes, refusing to send a truncated pdf\n", written);
+    return false;
+  }
+  if (expected > 0 && written < expected) {
+    Serial.printf("scan: got %d of %d bytes, refusing to send a truncated pdf\n", written, expected);
+    return false;
+  }
+  Serial.printf("scan: %d bytes\n", written);
+  return true;
 }
 
 int httpPostFile(String url, const char *ctype, const char *path, String &out) {
@@ -740,8 +787,13 @@ void loop() {
     "<pwg:Version>2.6</pwg:Version><scan:Intent>Document</scan:Intent>" +
     "<pwg:InputSource>" + input + "</pwg:InputSource>" +
     "<pwg:DocumentFormat>application/pdf</pwg:DocumentFormat>" +
+    // Colour is kept; the resolution is not. RGB24 at 300 dpi runs an A4 page
+    // past the 1.5 MB cap, which is what was truncating scans. 200 dpi is
+    // about 44% of the data, comfortably inside the cap, quicker to scan and
+    // quicker to push over TLS from an 80 MHz board -- and still well above
+    // what a document being emailed needs.
     "<scan:ColorMode>RGB24</scan:ColorMode>" +
-    "<scan:XResolution>300</scan:XResolution><scan:YResolution>300</scan:YResolution>" +
+    "<scan:XResolution>200</scan:XResolution><scan:YResolution>200</scan:YResolution>" +
     "</scan:ScanSettings>";
 
   String printerBase = "http://" + printer;
