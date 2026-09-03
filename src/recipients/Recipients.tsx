@@ -17,7 +17,6 @@ import {
   DashboardSquare01Icon,
   File01Icon,
   Layers01Icon,
-  DropletIcon,
   ListViewIcon,
   Mail01Icon,
   PrinterIcon,
@@ -34,7 +33,7 @@ import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
 import { useRecipients } from "@/recipients/context"
 
-type View = "overview" | "scan" | "recipients" | "jobs" | "supplies" | "print"
+type View = "overview" | "scan" | "recipients" | "jobs" | "print"
 
 function scannerState(scanner: string): "active" | "idle" | "fixing" | "down" {
   const value = scanner.toLowerCase()
@@ -387,8 +386,8 @@ function OverviewView() {
 
         {/* One tile, so no two-column grid: with Host gone a grid left Sender
             stranded at half width against empty space.
-            The toner bars were a duplicate of the Supplies screen and are
-            simply gone. The printer's address is a different case -- it is now
+            The toner bars are gone, as is the Supplies screen they
+            duplicated. The printer's address is a different case -- it is now
             shown nowhere in the dashboard at all. state.printerHost and the
             Worker's web_ui field are both still populated, so putting it back
             is a line of JSX rather than a round trip; that is why they are
@@ -398,138 +397,6 @@ function OverviewView() {
         </div>
 
       </article>
-    </div>
-  )
-}
-
-/**
- * One labelled bar: a cartridge's remaining life, or how full a tray is.
- *
- * `pct` is null when the printer declined to say, which is a real and common
- * answer rather than an error. A cartridge without a memory chip reports no
- * level at all, and a tray reports -2 for "unknown" or -3 for "at least one
- * sheet" in the printer MIB, neither of which is a percentage. The bridge
- * normalises all of those to null rather than inventing a number.
- *
- * `color` arrives from the bridge instead of being decided here, because only
- * the bridge knows which consumable a row is: it reads the supply's name from
- * the printer and picks the ink colour to match. Trays are passed a fixed blue
- * by the caller, since paper has no colour of its own to show.
- *
- * The percentages the printer reports are coarser than they look. This B305
- * holds both consumables at 100% for the first stretch of their life and only
- * steps down near its own warning thresholds, so treat a bar as "not near a
- * warning" rather than as a measurement.
- */
-function SupplyRow({ name, pct, color }: { name: string; pct: number | null; color: string }) {
-  const width = pct == null ? "0%" : `${pct}%`
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between text-xs">
-        <span className="text-muted-foreground">{name}</span>
-        <span className="font-medium">{pct == null ? "unknown" : `${pct}%`}</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full" style={{ width, background: color }} />
-      </div>
-    </div>
-  )
-}
-
-/**
- * Everything the printer will tell us about its own condition.
- *
- * The whole page is a render of one `supplies` object that the bridge posts to
- * the Worker and that arrives here on `/api/state`. Nothing on this screen is
- * computed in the browser, so a field is blank because the printer withheld
- * it, never because the dashboard failed to work it out.
- *
- * Two sources feed that object, which is why fields can disappear
- * individually. SNMP is tried first. When its agent goes quiet -- which this
- * printer does for hours at a time while its web interface stays perfectly
- * healthy -- the bridge reads the same facts over HTTP instead. The web
- * interface carries the model, serial, supplies and trays, but exposes no page
- * counter anywhere, so Pages is the one tile that shows a dash whenever SNMP
- * is down. That dash means "not reported", not zero.
- *
- * The empty state deliberately requires both conditions. A printer that is
- * offline but still has a remembered supply reading is worth showing, because
- * a stale toner level is more useful than a blank page; only a printer that is
- * both unreachable and never read gets the placeholder.
- */
-function SuppliesView() {
-  const { state } = useRecipients()
-  const supplies = state.supplies
-  if (!supplies || (!supplies.online && supplies.toners.length === 0)) {
-    return <EmptyState title="No SNMP reading" description="Supplies appear once the office box can reach the Xerox." />
-  }
-  return (
-    <div className="flex max-w-xl flex-col gap-6">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Status</p>
-          <p className="mt-2 text-xl font-semibold">{supplies.status}</p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-sm text-muted-foreground">Pages</p>
-          <p className="mt-2 text-xl font-semibold">{supplies.pages ?? "—"}</p>
-        </div>
-      </div>
-      {supplies.console ? (
-        <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs">{supplies.console}</p>
-      ) : null}
-      {supplies.model || supplies.serial ? (
-        <p className="text-muted-foreground text-xs">
-          {supplies.model}
-          {supplies.model && supplies.serial ? " · " : null}
-          {supplies.serial ? (
-            <>
-              Serial <span translate="no">{supplies.serial}</span>
-            </>
-          ) : null}
-        </p>
-      ) : null}
-      {/* Consumables, in whatever order the printer numbers them. The indices
-          are arbitrary -- this unit numbers its two supplies .1 and .14 -- so
-          the bridge probes a range and forwards whatever answered, and this
-          list is however many that turned out to be. */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">Supplies</h2>
-        {supplies.toners.map((row) => (
-          <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
-        ))}
-      </section>
-      {/* Every input the printer counts as a tray, which includes the two
-          manual feeders and the multipurpose slot. Those sit at 0% because
-          they are genuinely empty until someone feeds them, so an empty bar
-          here is normal rather than a warning. The status word comes from the
-          printer and rides in the label, since a percentage alone cannot say
-          "Empty" apart from "not reported". */}
-      <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold">Trays</h2>
-        {supplies.trays.map((row) => (
-          <SupplyRow
-            key={row.name}
-            name={`${row.name} (${row.status})`}
-            pct={row.pct}
-            color="#3b82f6"
-          />
-        ))}
-      </section>
-      {/* Only rendered when there is something to say. The printer keeps an
-          alert table and reports both real faults and routine notices through
-          it, so an empty section is the healthy case and is hidden entirely
-          rather than shown as a reassuring "none". */}
-      {supplies.alerts.length ? (
-        <section className="flex flex-col gap-2">
-          <h2 className="text-sm font-semibold">Alerts</h2>
-          {supplies.alerts.map((alert) => (
-            <p key={alert.desc} className="rounded-lg border border-border px-3 py-2 text-sm">
-              {alert.severity}: {alert.desc}
-            </p>
-          ))}
-        </section>
-      ) : null}
     </div>
   )
 }
@@ -650,8 +517,6 @@ function viewTitle(view: View): string {
       return "Recipients"
     case "jobs":
       return "Scan jobs"
-    case "supplies":
-      return "Supplies"
     case "print":
       return "Print"
     default: {
@@ -671,8 +536,6 @@ function viewSubtitle(view: View): string {
       return "Addresses that get the PDF."
     case "jobs":
       return "Scans this desk has run."
-    case "supplies":
-      return "Toner, trays and alerts over SNMP."
     case "print":
       return "Drop a PDF and the Xerox prints it. One job at a time, in order."
     default: {
@@ -684,13 +547,12 @@ function viewSubtitle(view: View): string {
 
 const NAV_ITEMS: MacOSSidebarItem[] = [
   { label: "Overview", icon: DashboardSquare01Icon },
-  { label: "Supplies", icon: DropletIcon },
   { label: "Scan", icon: ScanIcon },
   { label: "Recipients", icon: Mail01Icon },
   { label: "Scan jobs", icon: ListViewIcon },
   { label: "Print", icon: PrinterIcon },
 ]
-const NAV_VIEWS: View[] = ["overview", "supplies", "scan", "recipients", "jobs", "print"]
+const NAV_VIEWS: View[] = ["overview", "scan", "recipients", "jobs", "print"]
 
 export function RecipientsDashboard() {
   const { actions } = useRecipients()
@@ -761,7 +623,6 @@ export function RecipientsDashboard() {
             {view === "scan" ? <ScanView /> : null}
             {view === "recipients" ? <RecipientsView /> : null}
             {view === "jobs" ? <JobsView /> : null}
-            {view === "supplies" ? <SuppliesView /> : null}
             {view === "print" ? <PrintView /> : null}
           </div>
         </div>
