@@ -1,8 +1,19 @@
 name: cloudflare-pages
 
-# Deploys on every push to main. This is the only automation the project has:
-# the Cloudflare Pages project is direct-upload ("source": null in the API), not
+# Deploys on every push to main: the Worker first, then the Pages site. The
+# Cloudflare Pages project is direct-upload ("source": null in the API), not
 # connected to this repository, so nothing deploys unless this workflow runs.
+#
+# The Worker step exists because leaving it out cost a live bug. This workflow
+# shipped the dashboard and nothing else, so api/ changes only reached
+# production when somebody remembered to run wrangler by hand. A merge added a
+# remove button to the print history and the matching rule to the Worker; the
+# page went live, the Worker did not, and clicking the button got back "that
+# job is already printing" from a fortnight-old build.
+#
+# Order matters, and it is the Worker first. The browser calls the API, so a
+# new page against an old API is the breakage above, while an old page against
+# a new API is merely a feature nobody can reach yet.
 #
 # It currently fails, and not because of anything in this file. GitHub is
 # refusing to start jobs on this account -- "recent account payments have failed
@@ -39,7 +50,16 @@ jobs:
       - run: npm run build
         env:
           VITE_API_BASE: ${{ secrets.VITE_API_BASE }}
-      - uses: cloudflare/wrangler-action@v3
+      # Secrets already set on the Worker are left alone by a deploy, so this
+      # does not need them; only the vars in api/wrangler.jsonc are applied.
+      - name: Deploy the API Worker
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy -c api/wrangler.jsonc
+      - name: Deploy the dashboard
+        uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
