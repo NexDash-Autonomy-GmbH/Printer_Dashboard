@@ -441,6 +441,17 @@ function SuppliesView() {
       {supplies.console ? (
         <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 font-mono text-xs">{supplies.console}</p>
       ) : null}
+      {supplies.model || supplies.serial ? (
+        <p className="text-muted-foreground text-xs">
+          {supplies.model}
+          {supplies.model && supplies.serial ? " · " : null}
+          {supplies.serial ? (
+            <>
+              Serial <span translate="no">{supplies.serial}</span>
+            </>
+          ) : null}
+        </p>
+      ) : null}
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">Supplies</h2>
         {supplies.toners.map((row) => (

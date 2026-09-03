@@ -325,47 +325,111 @@ void postTelemetry(const String &printer, bool force = false) {
     return;
   }
   lastTelemetry = millis();
-  int statusN = snmpInt(printer.c_str(), "1.3.6.1.2.1.25.3.5.1.1.1");
-  int pages = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.10.2.1.4.1.1");
-  int tmax = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.8.1.1");
-  int tcur = snmpInt(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.9.1.1");
-  String tname = snmpStr(printer.c_str(), "1.3.6.1.2.1.43.11.1.1.6.1.1");
-  if (tname.length() == 0) {
-    tname = "Black Toner";
+  const char *host = printer.c_str();
+
+  int statusN = snmpInt(host, "1.3.6.1.2.1.25.3.5.1.1.1");
+  bool online = statusN != -999999;
+  int pages = snmpInt(host, "1.3.6.1.2.1.43.10.2.1.4.1.1");
+  int uptime = snmpInt(host, "1.3.6.1.2.1.1.3.0");
+  String console = snmpStr(host, "1.3.6.1.2.1.43.16.5.1.2.1.1");
+  String model = snmpStr(host, "1.3.6.1.2.1.1.1.0");
+  String serial = snmpStr(host, "1.3.6.1.2.1.43.5.1.1.17.1");
+  // sysDescr carries the kernel build and more; the model is the first clause.
+  int semi = model.indexOf(';');
+  if (semi > 0) {
+    model = model.substring(0, semi);
   }
-  int pct = -1;
-  if (tmax > 0 && tcur >= 0) {
-    pct = (tcur * 100) / tmax;
-    if (pct > 100) {
-      pct = 100;
-    }
-  }
+
   const char *status = "Unknown";
   if (statusN == 3) status = "Idle";
   else if (statusN == 4) status = "Printing";
   else if (statusN == 5) status = "Warmup";
   else if (statusN == 6) status = "Stopped";
   else if (statusN == 7) status = "Offline";
-  bool online = statusN != -999999;
-  String json = "{";
-  json += "\"online\":";
+
+  // Printer MIB indices are arbitrary: this B305 numbers its supplies .1 and
+  // .14, so reading .1 and .2 found one cartridge and missed the imaging unit
+  // entirely. Probe a range and keep whatever answers — a missing index replies
+  // at once with noSuchInstance, so this costs round trips, not timeouts.
+  String toners = "";
+  for (int i = 1; i <= 16; i++) {
+    int cur = snmpInt(host, (String("1.3.6.1.2.1.43.11.1.1.9.1.") + i).c_str());
+    if (cur == -999999) {
+      continue;
+    }
+    int max = snmpInt(host, (String("1.3.6.1.2.1.43.11.1.1.8.1.") + i).c_str());
+    String name = snmpStr(host, (String("1.3.6.1.2.1.43.11.1.1.6.1.") + i).c_str());
+    // Xerox appends part and serial numbers after a comma or semicolon.
+    int cut = name.indexOf(',');
+    int cut2 = name.indexOf(';');
+    if (cut2 >= 0 && (cut < 0 || cut2 < cut)) cut = cut2;
+    if (cut > 0) name = name.substring(0, cut);
+    name.trim();
+    if (name.length() == 0) name = String("Supply ") + i;
+    int pct = (max > 0 && cur >= 0) ? (int)(((long)cur * 100) / max) : -1;
+    if (pct > 100) pct = 100;
+    const char *colour = name.indexOf("Black") >= 0 ? "#1e293b" : "#64748b";
+    if (toners.length()) toners += ",";
+    toners += "{\"name\":\"" + name + "\",\"pct\":" + (pct < 0 ? String("null") : String(pct))
+            + ",\"color\":\"" + colour + "\"}";
+  }
+
+  String trays = "";
+  for (int i = 1; i <= 6; i++) {
+    int cur = snmpInt(host, (String("1.3.6.1.2.1.43.8.2.1.10.1.") + i).c_str());
+    if (cur == -999999) {
+      continue;
+    }
+    int cap = snmpInt(host, (String("1.3.6.1.2.1.43.8.2.1.9.1.") + i).c_str());
+    String name = snmpStr(host, (String("1.3.6.1.2.1.43.8.2.1.13.1.") + i).c_str());
+    name.trim();
+    if (name.length() == 0) name = String("Tray ") + i;
+    int pct = (cap > 0 && cur >= 0) ? (int)(((long)cur * 100) / cap) : -1;
+    if (pct > 100) pct = 100;
+    // -3 means "at least one sheet" and -2 unknown, per the printer MIB.
+    const char *tstatus = cur == 0 ? "Empty" : (cur < 0 ? "Unknown" : "Loaded");
+    if (trays.length()) trays += ",";
+    trays += "{\"name\":\"" + name + "\",\"capacity\":" + String(cap < 0 ? 0 : cap)
+           + ",\"level\":" + String(cur < 0 ? 0 : cur)
+           + ",\"pct\":" + (pct < 0 ? String("null") : String(pct))
+           + ",\"status\":\"" + tstatus + "\"}";
+  }
+
+  String alerts = "";
+  for (int i = 1; i <= 5; i++) {
+    String desc = snmpStr(host, (String("1.3.6.1.2.1.43.18.1.1.8.") + i).c_str());
+    desc.trim();
+    if (desc.length() == 0) {
+      continue;
+    }
+    int sev = snmpInt(host, (String("1.3.6.1.2.1.43.18.1.1.2.") + i).c_str());
+    // prtAlertSeverityLevel: 3 critical, 4 warning, 5 warningBinaryChangeEvent.
+    const char *sevName = sev == 3 ? "Critical" : "Warning";
+    if (alerts.length()) alerts += ",";
+    alerts += "{\"severity\":\"" + String(sevName) + "\",\"desc\":\"" + desc + "\"}";
+  }
+
+  String json = "{\"online\":";
   json += online ? "true" : "false";
-  json += ",\"status\":\"";
-  json += status;
-  json += "\",\"pages\":";
-  json += (pages == -999999) ? "null" : String(pages);
-  json += ",\"toners\":[{\"name\":\"";
-  json += tname;
-  json += "\",\"pct\":";
-  json += (pct < 0) ? "null" : String(pct);
-  json += ",\"color\":\"#1e293b\"}],\"trays\":[],\"alerts\":[],\"checked_at\":";
-  json += String((uint32_t)(millis() / 1000));
-  json += "}";
+  json += ",\"status\":\"" + String(status) + "\"";
+  if (model.length()) json += ",\"model\":\"" + model + "\"";
+  if (serial.length()) json += ",\"serial\":\"" + serial + "\"";
+  if (console.length()) json += ",\"console\":\"" + console + "\"";
+  json += ",\"pages\":" + String(pages == -999999 ? String("null") : String(pages));
+  if (uptime != -999999) json += ",\"uptime_ticks\":" + String(uptime);
+  json += ",\"toners\":[" + toners + "]";
+  json += ",\"trays\":[" + trays + "]";
+  json += ",\"alerts\":[" + alerts + "]";
+  json += ",\"checked_at\":" + String((uint32_t)(millis() / 1000)) + "}";
+
   String unused;
   String url = String(API_BASE) + "/bridge/telemetry";
   httpPostBytes(url.c_str(), "application/json", (uint8_t *)json.c_str(), json.length(), unused, true);
-  Serial.print("telemetry ");
-  Serial.println(online ? status : "offline");
+  Serial.printf("telemetry %s  supplies=%d trays=%d pages=%d\n",
+                online ? status : "offline",
+                toners.length() ? (int)(std::count(toners.begin(), toners.end(), '{')) : 0,
+                trays.length() ? (int)(std::count(trays.begin(), trays.end(), '{')) : 0,
+                pages);
 }
 
 // ---- print queue -----------------------------------------------------------

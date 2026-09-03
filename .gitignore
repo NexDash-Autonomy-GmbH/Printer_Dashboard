@@ -33,3 +33,6 @@ logs/
 .vscode/*
 !.vscode/extensions.json
 .dev.vars
+
+# wrangler local state
+.wrangler/
