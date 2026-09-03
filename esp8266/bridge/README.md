@@ -40,31 +40,44 @@ Serial at 115200. The banner reports the clock, then Wi-Fi progress, then
 `poll`, `job`, `print job` and `relay … KB/s` lines as it works. The garbage before
 the banner is the ROM bootloader at 74880 baud and is normal.
 
-## Two ways to ask the printer
+## Ask in HTTP/1.0 whenever you read the stream yourself
 
-SNMP is the primary source. It is also the one that fails: this B305's SNMP
-agent went silent for hours while its web interface stayed perfectly healthy,
-answering every request. So when SNMP returns nothing, `webui.cpp` reads the
-same facts over HTTP instead, and the dashboard stays populated.
+This one has bitten twice and cost a working feature both times, so it is the
+first thing to check if data arriving through the bridge looks mangled.
 
-Three things to know before touching it.
+This printer answers with `Transfer-Encoding: chunked`, and
+`ESP8266HTTPClient` de-chunks **only** inside `getString()` and
+`writeToStream()` -- never on the stream you get from `getStreamPtr()`. Read
+that stream over HTTP/1.1 and every chunk-size line lands in the middle of
+your data.
 
-**Ask in HTTP/1.0.** Over 1.1 the printer replies
-`Transfer-Encoding: chunked`, and `ESP8266HTTPClient` only de-chunks inside
-`getString()` and `writeToStream()`, never on the stream itself. Read the
-stream of a 1.1 response and the chunk-size lines arrive mixed into the JSON.
+It corrupted scans for a day: `NextDocument` is chunked, `downloadToFile`
+reads the raw stream, and the emailed PDF rendered cleanly at the top and then
+dissolved into bands of colour where the injected bytes wrecked the JPEG.
+Nothing about it looked like a transport bug -- the file was the right size and
+a valid PDF.
 
-**Read `getStreamPtr()`, never the `WiFiClient` you passed in.**
-`HTTPClient::begin()` clones it, so the socket the request went out on is the
-clone's. Reading your own object returns an empty stream with no error at all.
+So: **every `HTTPClient` in this sketch calls `http.useHTTP10(true)`**, and any
+new one that reads `getStreamPtr()` must too. There are three, and the audit is
+one command:
+
+```
+grep -nE "HTTPClient|useHTTP10|getStreamPtr" bridge.ino
+```
+
+The first time this appeared it was fixed in one place only. The second
+instance had been sitting in `downloadToFile` the whole time. Fix the class,
+not the instance.
+
+## What the bridge reads
+
+SNMP for the device status, one query, with a backoff when the agent goes
+quiet -- which this printer does for hours while its HTTP interface stays
+perfectly healthy. eSCL's `ScannerStatus` is the fallback, and proves the
+printer is at least on the network.
 
 **The printer has two serial numbers.** `DeviceSerialNumberUnq` is the one its
 own interface labels "Serial Number" and the one SNMP returns: `3026970899` on
 this unit. `DeviceSerialNumberTrk` is the TSN, `701951340W7GM`, and that is
-what eSCL puts in its `SerialNumber` field. Both are real. Only the first is
-on the label, so that is the one the dashboard shows.
-
-The status document is ~32 KB against 80 KB of RAM, so it is parsed as it
-arrives and never held whole. `/webglue/webui/nodedata/Status` needs no
-authentication, which is the printer's own configuration, not something the
-bridge chose.
+what eSCL puts in its `SerialNumber` field. Both are real; only the first is on
+the label.

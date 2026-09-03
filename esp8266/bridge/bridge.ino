@@ -238,6 +238,18 @@ bool downloadToFile(String url, const char *path) {
   LittleFS.remove(path);
   HTTPClient http;
   http.setTimeout(180000);
+  // Ask in HTTP/1.0, and never remove this without reading the whole comment.
+  //
+  // The printer answers NextDocument with Transfer-Encoding: chunked. This
+  // function reads the socket directly through getStreamPtr(), and
+  // ESP8266HTTPClient only de-chunks inside getString() and writeToStream() --
+  // never on the stream itself. So over 1.1 every chunk-size line lands in the
+  // middle of the PDF: the page rendered cleanly at the top and then dissolved
+  // into bands of colour where the injected bytes wrecked the JPEG.
+  //
+  // HTTP/1.0 has no chunked encoding, so the body arrives as the body and the
+  // server closes the connection to mark the end.
+  http.useHTTP10(true);
   WiFiClient client;
   if (!http.begin(client, url)) {
     return false;
@@ -536,6 +548,11 @@ bool streamPrintJob(const String &job, const String &printer, bool duplex) {
   } clearOnExit;
   HTTPClient http;
   http.setTimeout(180000);
+  // Same trap as the scan download: this relays getStreamPtr() straight into
+  // the printer's port 9100, so a chunked response would push chunk-size lines
+  // into the print data. Nothing has been seen doing that here, but the cost
+  // of being wrong is a corrupt print, and the fix is one line.
+  http.useHTTP10(true);
   BearSSL::WiFiClientSecure client;
   client.setInsecure();
   String url = String(API_BASE) + "/bridge/print/file?job=" + job;
