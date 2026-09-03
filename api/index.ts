@@ -80,18 +80,30 @@ type ScanLog = {
   error?: string;
 };
 
+/**
+ * What the bridge reports about the printer.
+ *
+ * Only online, status and checked_at arrive now. The bridge stopped gathering
+ * the rest when the Supplies screen was removed: it was 33 SNMP queries a
+ * minute, plus a 32 KB parse off the printer's web interface whenever SNMP
+ * went quiet, for numbers nothing read.
+ *
+ * The old fields stay declared, and optional, because rows written before that
+ * change are still in storage and a reader must cope with either shape. A
+ * bridge that starts sending them again needs no change here.
+ */
 type Supplies = {
   online: boolean;
   status: string;
+  checked_at: number;
   model?: string;
   serial?: string;
   pages?: number | null;
   uptime_ticks?: number;
   console?: string;
-  toners: Array<{ name: string; pct: number | null; color: string }>;
-  trays: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>;
-  alerts: Array<{ severity: string; desc: string }>;
-  checked_at: number;
+  toners?: Array<{ name: string; pct: number | null; color: string }>;
+  trays?: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>;
+  alerts?: Array<{ severity: string; desc: string }>;
 };
 
 const WORKSPACE = [
