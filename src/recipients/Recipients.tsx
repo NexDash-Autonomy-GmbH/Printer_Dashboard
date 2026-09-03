@@ -406,16 +406,36 @@ function OverviewView() {
 }
 
 function SupplyRow({ name, pct, color }: { name: string; pct: number | null; color: string }) {
-  const width = pct == null ? "0%" : `${pct}%`
+  const known = pct != null
   return (
     <div>
       <div className="mb-1 flex items-center justify-between text-xs">
         <span className="text-muted-foreground">{name}</span>
-        <span className="font-medium">{pct == null ? "unknown" : `${pct}%`}</span>
+        <span className={known ? "font-medium tabular-nums" : "text-muted-foreground"}>
+          {known ? `${pct}%` : "No reading"}
+        </span>
       </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full" style={{ width, background: color }} />
-      </div>
+      {/* An empty solid track reads as a full bar — bg-muted is light enough
+          against the card that "unknown" looked like 100% toner. Unknown gets a
+          dashed outline and no fill instead: visibly not a measurement. */}
+      {known ? (
+        <div
+          role="progressbar"
+          aria-label={name}
+          aria-valuenow={pct}
+          aria-valuemin={0}
+          aria-valuemax={100}
+          className="bg-muted/50 h-2 overflow-hidden rounded-full"
+        >
+          <div className="h-full rounded-full" style={{ width: `${pct}%`, background: color }} />
+        </div>
+      ) : (
+        <div
+          role="img"
+          aria-label={`${name}: no reading`}
+          className="border-border/70 h-2 rounded-full border border-dashed"
+        />
+      )}
     </div>
   )
 }
