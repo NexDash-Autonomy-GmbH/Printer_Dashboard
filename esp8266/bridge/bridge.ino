@@ -11,6 +11,7 @@
 #include <Ticker.h>
 #include "secrets.h"
 #include "snmp.h"
+#include "webui.h"
 
 // ---- status LED ------------------------------------------------------------
 // The onboard LED is GPIO2 and active LOW. It is driven off a timer rather than
@@ -409,6 +410,57 @@ void postTelemetry(const String &printer, bool force = false) {
     alerts += "{\"severity\":\"" + String(sevName) + "\",\"desc\":\"" + desc + "\"}";
   }
 
+  // SNMP on this B305 stopped answering for hours while its web interface
+  // stayed perfectly healthy. Reporting nothing in that state is a worse
+  // answer than asking the other door, which knows the same facts and a few
+  // SNMP never exposed here.
+  if (toners.length() == 0) {
+    WebSupply ws[6];
+    WebTray wt[6];
+    int nS = 0, nT = 0;
+    String webSerial;
+    if (webuiStatus(printer, ws, 6, nS, wt, 6, nT, webSerial)) {
+      for (int i = 0; i < nS; i++) {
+        const char *colour = ws[i].name.indexOf("Black") >= 0 ? "#1e293b" : "#64748b";
+        if (toners.length()) toners += ",";
+        toners += "{\"name\":\"" + ws[i].name + "\",\"pct\":"
+                + (ws[i].pct < 0 ? String("null") : String(ws[i].pct))
+                + ",\"color\":\"" + colour + "\"}";
+      }
+      if (trays.length() == 0) {
+        for (int i = 0; i < nT; i++) {
+          if (trays.length()) trays += ",";
+          trays += "{\"name\":\"" + wt[i].name + "\",\"capacity\":" + String(wt[i].capacity)
+                 + ",\"level\":0,\"pct\":"
+                 + (wt[i].pct < 0 ? String("null") : String(wt[i].pct))
+                 + ",\"status\":\"" + (wt[i].pct < 0 ? "Unknown" : (wt[i].pct == 0 ? "Empty" : "Loaded"))
+                 + "\"}";
+        }
+      }
+      if (serial.length() == 0 && webSerial.length()) {
+        serial = webSerial;
+      }
+      // Only ask eSCL for what is still missing. Its SerialNumber is the TSN,
+      // a different number from the one on the label, so it is the last
+      // resort for the serial and never overrides webSerial.
+      if (model.length() == 0 || serial.length() == 0) {
+        String m, sn;
+        if (webuiIdentity(printer, m, sn)) {
+          if (model.length() == 0) model = m;
+          if (serial.length() == 0) serial = sn;
+        }
+      }
+      if (!online) {
+        // Reached over HTTP, so it is on the network whatever SNMP thinks.
+        // The scanner's own state is the only movement signal left, and it
+        // says nothing about the print engine, so never claim Printing here.
+        online = true;
+        String st = webuiScannerState(printer);
+        status = st == "Idle" ? "Idle" : (st.length() ? "Busy" : "Unknown");
+      }
+    }
+  }
+
   String json = "{\"online\":";
   json += online ? "true" : "false";
   json += ",\"status\":\"" + String(status) + "\"";
@@ -425,11 +477,11 @@ void postTelemetry(const String &printer, bool force = false) {
   String unused;
   String url = String(API_BASE) + "/bridge/telemetry";
   httpPostBytes(url.c_str(), "application/json", (uint8_t *)json.c_str(), json.length(), unused, true);
-  Serial.printf("telemetry %s  supplies=%d trays=%d pages=%d\n",
+  Serial.printf("telemetry %s  supplies=%d trays=%d pages=%d serial=%s\n",
                 online ? status : "offline",
                 toners.length() ? (int)(std::count(toners.begin(), toners.end(), '{')) : 0,
                 trays.length() ? (int)(std::count(trays.begin(), trays.end(), '{')) : 0,
-                pages);
+                pages, serial.length() ? serial.c_str() : "-");
 }
 
 // ---- print queue -----------------------------------------------------------
@@ -453,9 +505,18 @@ void waitForPrinter(const String &printer) {
   uint32_t start = millis();
   bool sawPrinting = false;
   int idleRuns = 0;
+  int blindRuns = 0;
   while (millis() - start < 5UL * 60UL * 1000UL) {
     int st = snmpInt(printer.c_str(), HR_DEVICE_STATUS);
-    if (st == 4 || st == 5) {
+    if (st == -999999) {
+      // SNMP is not answering at all, which this printer does for hours at a
+      // time. Waiting cannot learn anything, and holding the queue blind for
+      // the full five minutes is worse than calling it done: the bytes are
+      // already inside the printer. Give it ~9 s in case it is a blip.
+      if (++blindRuns >= 3) {
+        break;
+      }
+    } else if (st == 4 || st == 5) {
       sawPrinting = true;
       idleRuns = 0;
     } else if (st == 3) {
