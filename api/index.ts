@@ -105,6 +105,9 @@ type Supplies = {
   online: boolean;
   status: string;
   checked_at: number;
+  /* The scanner's feeder, straight from eSCL: "ScannerAdfEmpty",
+     "ScannerAdfLoaded" and so on. SNMP does not carry this. */
+  adf?: string;
   model?: string;
   serial?: string;
   pages?: number | null;
@@ -315,7 +318,11 @@ export class PrinterApi extends DurableObject<Env> {
       printer_host: this.env.PRINTER_HOST || "192.168.68.52",
       model: "Xerox B305 MFP",
       scanner: online ? "Idle" : "unreachable",
-      adf: "unknown",
+      // Was hardcoded "unknown", which the Scan screen reads as "cannot tell"
+      // -- so its guard against starting a feeder scan with an empty tray
+      // never fired. The bridge reports it now; "unknown" is only the answer
+      // when nothing has been heard yet.
+      adf: (await this.supplies())?.adf || "unknown",
       scan_dir: "",
       from_email: this.env.SMTP_FROM_EMAIL || null,
       from_name: this.env.SMTP_FROM_NAME || null,
@@ -883,7 +890,13 @@ export class PrinterApi extends DurableObject<Env> {
     }
     this.lastSeen = Date.now();
     const body = (await request.json().catch(() => null)) as Supplies | null;
-    if (!body || !Array.isArray(body.toners) || !Array.isArray(body.trays)) {
+    // Only `status` is required. This used to demand toners and trays as
+    // arrays, and when the bridge stopped collecting supplies it kept posting
+    // without them -- so every report was rejected with 400 and the stored
+    // status quietly froze at whatever it had been before. Nothing showed it:
+    // lastSeen is set above this, so the dashboard went on saying the bridge
+    // was online while none of its readings were being kept.
+    if (!body || typeof body.status !== "string") {
       return json(request, this.env, 400, { ok: false, error: "bad telemetry" });
     }
     const supplies: Supplies = {
@@ -894,9 +907,11 @@ export class PrinterApi extends DurableObject<Env> {
       pages: body.pages ?? null,
       uptime_ticks: body.uptime_ticks,
       console: body.console,
-      toners: body.toners.slice(0, 16),
-      trays: body.trays.slice(0, 16),
-      alerts: (body.alerts || []).slice(0, 32),
+      adf: typeof body.adf === "string" ? body.adf : undefined,
+      // Still accepted, so a bridge that does send them is not penalised.
+      toners: Array.isArray(body.toners) ? body.toners.slice(0, 16) : undefined,
+      trays: Array.isArray(body.trays) ? body.trays.slice(0, 16) : undefined,
+      alerts: Array.isArray(body.alerts) ? body.alerts.slice(0, 32) : undefined,
       checked_at: Number(body.checked_at) || Date.now() / 1000,
     };
     await this.ctx.storage.put("supplies", supplies);
