@@ -28,6 +28,7 @@ import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
+import { Clock } from "@/components/Clock"
 import { removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
@@ -677,6 +678,7 @@ export function RecipientsDashboard() {
               {/* One right-hand cluster. As three siblings under justify-between,
                   the controls were pushed to the middle of the row. */}
               <div className="flex shrink-0 items-center gap-3">
+                <Clock />
                 <div className="border-border bg-muted/50 flex items-center gap-1.5 rounded-full border p-1.5">
                   <AnimatedButton
                     type="button"
