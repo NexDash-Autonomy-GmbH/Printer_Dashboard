@@ -75,6 +75,8 @@ type PrintJob = {
 };
 
 const PRINT_MAX_BYTES = 25 * 1024 * 1024; // KV's per-value ceiling
+/* A scan this large is a fault, not a document. Enforced on bytes received. */
+const MAX_SCAN_BYTES = 20 * 1024 * 1024;
 const PRINT_FILE_TTL_S = 24 * 60 * 60; // safety net if a delete is ever missed
 const PRINT_STALE_MS = 15 * 60 * 1000; // relay plus the printer finishing; longer than that, the bridge is gone
 const PRINT_HISTORY = 20;
@@ -811,11 +813,23 @@ export class PrinterApi extends DurableObject<Env> {
     const url = new URL(request.url);
     const id = url.searchParams.get("job") || "";
     const errMsg = url.searchParams.get("error") || "";
-    const length = Number(request.headers.get("Content-Length") || "0");
-    if (length > 20 * 1024 * 1024) {
+    // Checked after reading, not from the header.
+    //
+    // The bridge relays the scan as it arrives from the printer, so it cannot
+    // know the size when the request starts and sends it chunked with no
+    // Content-Length. Reading the header gave 0, which sailed past the limit:
+    // the cap was silently off for exactly the uploads it was meant to bound.
+    // A declared length is still honoured, so an oversized one is refused
+    // before its body is read.
+    const declared = Number(request.headers.get("Content-Length") || "0");
+    if (declared > MAX_SCAN_BYTES) {
+      await discardBody(request);
       return json(request, this.env, 413, { ok: false, error: "pdf too large" });
     }
     const buf = errMsg ? new Uint8Array() : new Uint8Array(await request.arrayBuffer());
+    if (buf.byteLength > MAX_SCAN_BYTES) {
+      return json(request, this.env, 413, { ok: false, error: "pdf too large" });
+    }
     const job = this.active && this.active.id === id ? this.active : this.queued && this.queued.id === id ? this.queued : null;
     if (job) {
       if (this.active?.id === id) {
@@ -919,6 +933,14 @@ export default {
         });
       }
       const body = await request.arrayBuffer();
+      // Same reason as above: a chunked request declares nothing, so the only
+      // honest check is on what actually arrived.
+      if (body.byteLength > MAX_BODY_BYTES) {
+        return new Response(JSON.stringify({ ok: false, error: "body too large" }), {
+          status: 413,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
       forward = new Request(request.url, {
         method: request.method,
         headers: request.headers,
