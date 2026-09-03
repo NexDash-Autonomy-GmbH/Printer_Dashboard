@@ -235,6 +235,7 @@ int startScanJob(String printerBase, const char *xml, String &loc) {
 }
 
 bool downloadToFile(String url, const char *path) {
+  const uint32_t fetchStart = millis();
   LittleFS.remove(path);
   HTTPClient http;
   http.setTimeout(180000);
@@ -328,6 +329,10 @@ int httpPostFile(String url, const char *ctype, const char *path, String &out) {
     return -1;
   }
   size_t len = f.size();
+  // TLS on this chip is CPU-bound, so this leg is the suspected cost of a
+  // scan. Timed separately from the fetch so the two can be compared rather
+  // than argued about.
+  const uint32_t upStart = millis();
   HTTPClient http;
   int code = -1;
   out = "";
@@ -345,6 +350,10 @@ int httpPostFile(String url, const char *ctype, const char *path, String &out) {
     if (code > 0) {
       out = http.getString();
     }
+    const uint32_t took = millis() - upStart;
+    Serial.printf("upload: %u bytes over TLS in %lu ms (%lu KB/s) -> %d\n",
+                  (unsigned)len, (unsigned long)took,
+                  (unsigned long)(took > 0 ? (len / took) * 1000 / 1024 : 0), code);
     http.end();
     f.close();
     return code;
