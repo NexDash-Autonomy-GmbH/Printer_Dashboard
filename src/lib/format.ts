@@ -13,3 +13,18 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
+
+/**
+ * A stored status token as a label: first letter capitalised, and every letter
+ * after an underscore too, with the underscores read as spaces.
+ *
+ *   saved       -> Saved
+ *   scan_failed -> Scan Failed
+ */
+export function statusLabel(token: string): string {
+  return token
+    .split("_")
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ")
+}

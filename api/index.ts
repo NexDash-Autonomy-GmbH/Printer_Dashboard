@@ -330,6 +330,25 @@ export class PrinterApi extends DurableObject<Env> {
   }
 
   private async handleScan(request: Request, actor: string): Promise<Response> {
+    // Clearing one entry out of the scan log. Keyed on `at`, the scan's start
+    // in milliseconds, because a ScanLog has no id and never has: it is a
+    // desk log, so the timestamp is the handle the dashboard already uses.
+    //
+    // The log is shared rather than per-user, unlike recipients. Everyone at
+    // this desk sees the same scans, so everyone can tidy them.
+    if (request.method === "DELETE") {
+      const at = Number(new URL(request.url).searchParams.get("at") || "0");
+      if (!Number.isFinite(at) || at <= 0) {
+        return json(request, this.env, 400, { ok: false, error: "which scan?" });
+      }
+      const log = await this.scanLog();
+      const next = log.filter((row) => row.at !== at);
+      if (next.length === log.length) {
+        return json(request, this.env, 404, { ok: false, error: "no such scan" });
+      }
+      await this.ctx.storage.put("scans", next);
+      return json(request, this.env, 200, { ok: true, scans: next });
+    }
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
