@@ -65,7 +65,49 @@ static int oidEncode(const char *oid, uint8_t *out, int cap) {
   return i;
 }
 
+
+// Backing off from a silent agent.
+//
+// This printer's SNMP agent stops answering for hours at a time while its HTTP
+// interface stays healthy. Every query then costs a full timeout, and one
+// telemetry pass makes 33 of them: at the old 1500 ms that was fifty seconds
+// of waiting, during which the bridge is not polling for work, so a scan
+// started in that window sat unclaimed for the best part of a minute.
+//
+// So: a much shorter timeout, and after a few consecutive silences the agent
+// is treated as down and every query fails instantly until the cooldown ends.
+// One query then re-probes it, and a single reply clears the whole state, so a
+// printer that comes back is picked up within a cooldown rather than needing a
+// reflash.
+//
+// 600 ms is still generous. A printer on the same LAN answers in single-digit
+// milliseconds; anything past that is not slow, it is absent.
+static const uint32_t SNMP_TIMEOUT_MS = 600;
+static const int SNMP_FAIL_LIMIT = 4;
+static const uint32_t SNMP_COOLDOWN_MS = 5UL * 60UL * 1000UL;
+
+static int snmpFails = 0;
+static uint32_t snmpQuietUntil = 0;
+static bool snmpQuiet = false;
+
+/** True while the agent is being left alone. Signed compare survives rollover. */
+static bool snmpBackedOff() {
+  if (!snmpQuiet) {
+    return false;
+  }
+  if ((int32_t)(millis() - snmpQuietUntil) >= 0) {
+    // Cooldown is up: let the next query through as a probe.
+    snmpQuiet = false;
+    snmpFails = 0;
+    return false;
+  }
+  return true;
+}
+
 int snmpGet(const char *host, const char *oid, uint8_t *value, int valueCap, int *valueLen, uint8_t *valueTag) {
+  if (snmpBackedOff()) {
+    return -3;
+  }
   uint8_t pkt[128];
   int i = 0;
   uint8_t oidBuf[48];
@@ -125,7 +167,7 @@ int snmpGet(const char *host, const char *oid, uint8_t *value, int valueCap, int
     return -1;
   }
   uint32_t start = millis();
-  while (millis() - start < 1500) {
+  while (millis() - start < SNMP_TIMEOUT_MS) {
     int n = udp.parsePacket();
     if (n > 0) {
       uint8_t buf[256];
@@ -144,6 +186,10 @@ int snmpGet(const char *host, const char *oid, uint8_t *value, int valueCap, int
               memcpy(value, buf + q + 2, vlen);
               *valueLen = vlen;
               udp.stop();
+              // Answering at all means the agent is alive. Clear the count so
+              // an occasional lost datagram never accumulates into a backoff.
+              snmpFails = 0;
+              snmpQuiet = false;
               return 0;
             }
           }
@@ -156,6 +202,12 @@ int snmpGet(const char *host, const char *oid, uint8_t *value, int valueCap, int
     yield();
   }
   udp.stop();
+  if (++snmpFails >= SNMP_FAIL_LIMIT) {
+    snmpQuiet = true;
+    snmpQuietUntil = millis() + SNMP_COOLDOWN_MS;
+    snmpFails = 0;
+    Serial.println("snmp silent, backing off 5 min");
+  }
   return -3;
 }
 
