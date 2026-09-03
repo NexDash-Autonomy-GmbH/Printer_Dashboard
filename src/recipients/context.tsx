@@ -39,7 +39,11 @@ export type RecipientsState = {
    * that is now closed. Separate from jobStatus, which only ever describes a
    * scan this tab started, so restoring the view never fights local state.
    */
-  remoteScan: { stage: "waiting" | "scanning"; since: number } | null
+  remoteScan: {
+    stage: "waiting" | "scanning" | "uploading" | "emailing"
+    since: number
+    bytes: number | null
+  } | null
   supplies: Supplies | null
 }
 
@@ -76,9 +80,18 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
     loadError: null,
     bridgeOnline: Boolean(data.bridge_online),
     scans: data.scans || [],
-    remoteScan: data.scan_in_progress
-      ? { stage: data.scan_in_progress.stage, since: data.scan_in_progress.since }
-      : null,
+    // Dropped here rather than in the view. The Worker gives a scan 180 s
+    // before it fails it, so anything older is not coming back, and judging
+    // that during render would mean calling Date.now() in a component -- a
+    // value that changes on every re-render for no reason the render can see.
+    remoteScan:
+      data.scan_in_progress && Date.now() - data.scan_in_progress.since < 240_000
+        ? {
+            stage: data.scan_in_progress.stage,
+            since: data.scan_in_progress.since,
+            bytes: data.scan_in_progress.bytes ?? null,
+          }
+        : null,
     supplies: data.supplies || null,
   }
 }
