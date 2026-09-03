@@ -407,6 +407,25 @@ function OverviewView() {
   )
 }
 
+/**
+ * One labelled bar: a cartridge's remaining life, or how full a tray is.
+ *
+ * `pct` is null when the printer declined to say, which is a real and common
+ * answer rather than an error. A cartridge without a memory chip reports no
+ * level at all, and a tray reports -2 for "unknown" or -3 for "at least one
+ * sheet" in the printer MIB, neither of which is a percentage. The bridge
+ * normalises all of those to null rather than inventing a number.
+ *
+ * `color` arrives from the bridge instead of being decided here, because only
+ * the bridge knows which consumable a row is: it reads the supply's name from
+ * the printer and picks the ink colour to match. Trays are passed a fixed blue
+ * by the caller, since paper has no colour of its own to show.
+ *
+ * The percentages the printer reports are coarser than they look. This B305
+ * holds both consumables at 100% for the first stretch of their life and only
+ * steps down near its own warning thresholds, so treat a bar as "not near a
+ * warning" rather than as a measurement.
+ */
 function SupplyRow({ name, pct, color }: { name: string; pct: number | null; color: string }) {
   const width = pct == null ? "0%" : `${pct}%`
   return (
@@ -422,6 +441,27 @@ function SupplyRow({ name, pct, color }: { name: string; pct: number | null; col
   )
 }
 
+/**
+ * Everything the printer will tell us about its own condition.
+ *
+ * The whole page is a render of one `supplies` object that the bridge posts to
+ * the Worker and that arrives here on `/api/state`. Nothing on this screen is
+ * computed in the browser, so a field is blank because the printer withheld
+ * it, never because the dashboard failed to work it out.
+ *
+ * Two sources feed that object, which is why fields can disappear
+ * individually. SNMP is tried first. When its agent goes quiet -- which this
+ * printer does for hours at a time while its web interface stays perfectly
+ * healthy -- the bridge reads the same facts over HTTP instead. The web
+ * interface carries the model, serial, supplies and trays, but exposes no page
+ * counter anywhere, so Pages is the one tile that shows a dash whenever SNMP
+ * is down. That dash means "not reported", not zero.
+ *
+ * The empty state deliberately requires both conditions. A printer that is
+ * offline but still has a remembered supply reading is worth showing, because
+ * a stale toner level is more useful than a blank page; only a printer that is
+ * both unreachable and never read gets the placeholder.
+ */
 function SuppliesView() {
   const { state } = useRecipients()
   const supplies = state.supplies
@@ -454,12 +494,22 @@ function SuppliesView() {
           ) : null}
         </p>
       ) : null}
+      {/* Consumables, in whatever order the printer numbers them. The indices
+          are arbitrary -- this unit numbers its two supplies .1 and .14 -- so
+          the bridge probes a range and forwards whatever answered, and this
+          list is however many that turned out to be. */}
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">Supplies</h2>
         {supplies.toners.map((row) => (
           <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
         ))}
       </section>
+      {/* Every input the printer counts as a tray, which includes the two
+          manual feeders and the multipurpose slot. Those sit at 0% because
+          they are genuinely empty until someone feeds them, so an empty bar
+          here is normal rather than a warning. The status word comes from the
+          printer and rides in the label, since a percentage alone cannot say
+          "Empty" apart from "not reported". */}
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold">Trays</h2>
         {supplies.trays.map((row) => (
@@ -471,6 +521,10 @@ function SuppliesView() {
           />
         ))}
       </section>
+      {/* Only rendered when there is something to say. The printer keeps an
+          alert table and reports both real faults and routine notices through
+          it, so an empty section is the healthy case and is hidden entirely
+          rather than shown as a reassuring "none". */}
       {supplies.alerts.length ? (
         <section className="flex flex-col gap-2">
           <h2 className="text-sm font-semibold">Alerts</h2>
