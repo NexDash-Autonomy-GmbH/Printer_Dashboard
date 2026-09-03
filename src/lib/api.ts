@@ -262,3 +262,15 @@ export async function cancelPrint(id: string): Promise<PrintQueue> {
   const res = await request(`/api/print?id=${encodeURIComponent(id)}`, { method: "DELETE" })
   return printJson(res)
 }
+
+/** Clears one entry from the scan log, keyed on its start time. */
+export async function removeScan(at: number): Promise<void> {
+  const res = await request(`/api/scan?at=${encodeURIComponent(String(at))}`, { method: "DELETE" })
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(SIGNED_OUT)
+  }
+  const body = await readJson<{ ok?: boolean; error?: string }>(res)
+  if (!res.ok || body.ok === false) {
+    throw new Error(body.error || "Could not remove that scan")
+  }
+}

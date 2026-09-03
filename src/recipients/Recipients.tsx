@@ -1,5 +1,5 @@
 import { useState, useTransition } from "react"
-import { CheckIcon, CircleAlertIcon } from "lucide-react"
+import { CheckIcon, CircleAlertIcon, XIcon } from "lucide-react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -28,7 +28,8 @@ import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
-import { formatWhen } from "@/lib/format"
+import { removeScan } from "@/lib/api"
+import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
 import { useRecipients } from "@/recipients/context"
 
@@ -524,7 +525,21 @@ function RecipientsView() {
 }
 
 function JobsView() {
-  const { state } = useRecipients()
+  const { state, actions } = useRecipients()
+  const [busyAt, setBusyAt] = useState<number | null>(null)
+
+  const drop = async (at: number) => {
+    setBusyAt(at)
+    try {
+      await removeScan(at)
+      await actions.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not remove that scan")
+    } finally {
+      setBusyAt(null)
+    }
+  }
+
   if (state.scans.length === 0) {
     return <EmptyState title="No scans yet" description="Scans you run from the Scan tab are listed here." />
   }
@@ -537,6 +552,11 @@ function JobsView() {
             <th className="px-4 py-2 font-medium">File</th>
             <th className="px-4 py-2 font-medium">Status</th>
             <th className="px-4 py-2 font-medium">To</th>
+            {/* The remove column carries only buttons, so its header is for
+                screen readers rather than the eye. */}
+            <th className="px-4 py-2 font-medium">
+              <span className="sr-only">Remove</span>
+            </th>
           </tr>
         </thead>
         <tbody>
@@ -544,9 +564,20 @@ function JobsView() {
             <tr key={`${row.at}-${index}`} className="border-b border-border last:border-0">
               <td className="whitespace-nowrap px-4 py-2.5">{formatWhen(row.at)}</td>
               <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
-              <td className="px-4 py-2.5">{row.error || row.stage}</td>
+              <td className="px-4 py-2.5">{row.error || statusLabel(row.stage)}</td>
               <td className="px-4 py-2.5 text-muted-foreground">
                 {row.recipients.length ? row.recipients.join(", ") : "nobody"}
+              </td>
+              <td className="px-2 py-2.5 text-right">
+                <button
+                  type="button"
+                  aria-label={`Remove the scan from ${formatWhen(row.at)}`}
+                  disabled={busyAt === row.at}
+                  onClick={() => void drop(row.at)}
+                  className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-8 place-items-center rounded-lg outline-none focus-visible:ring-3 disabled:opacity-50"
+                >
+                  <XIcon className="size-4" />
+                </button>
               </td>
             </tr>
           ))}
