@@ -200,6 +200,8 @@ export type PrintJob = {
   finished_at?: number
   /** 1-based place in line while queued; 0 while printing; null once finished. */
   position: number | null
+  /** Two-sided was requested for this job. */
+  duplex: boolean
 }
 
 export type PrintQueue = {
@@ -227,7 +229,10 @@ export async function fetchPrintQueue(): Promise<PrintQueue> {
 }
 
 /** Uploads one PDF. The body is the raw file; the name rides in a header. */
-export async function uploadPrint(file: File): Promise<PrintQueue & { id?: string }> {
+export async function uploadPrint(
+  file: File,
+  options: { duplex?: boolean } = {},
+): Promise<PrintQueue & { id?: string }> {
   if (file.size > PRINT_MAX_BYTES) {
     throw new Error("PDFs up to 25 MB only")
   }
@@ -239,6 +244,8 @@ export async function uploadPrint(file: File): Promise<PrintQueue & { id?: strin
       headers: {
         "Content-Type": "application/pdf",
         "X-File-Name": encodeURIComponent(file.name),
+        // Only sent when asked for, so the default stays one-sided.
+        ...(options.duplex ? { "X-Duplex": "1" } : {}),
       },
       body: file,
     },
@@ -247,6 +254,10 @@ export async function uploadPrint(file: File): Promise<PrintQueue & { id?: strin
   return printJson(res)
 }
 
+/**
+ * Removes a job. Cancels it while queued, clears it from the history once it
+ * has finished. The Worker refuses only a job on the printer right now.
+ */
 export async function cancelPrint(id: string): Promise<PrintQueue> {
   const res = await request(`/api/print?id=${encodeURIComponent(id)}`, { method: "DELETE" })
   return printJson(res)

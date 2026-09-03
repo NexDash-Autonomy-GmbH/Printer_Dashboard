@@ -562,7 +562,7 @@ void postPrintResult(const String &job, const char *encodedError) {
   httpPostBytes(url, "text/plain", NULL, 0, unused, true);
 }
 
-bool streamPrintJob(const String &job, const String &printer) {
+bool streamPrintJob(const String &job, const String &printer, bool duplex) {
   printInFlight = true;
   struct ClearOnExit {
     ~ClearOnExit() { printInFlight = false; }
@@ -593,6 +593,23 @@ bool streamPrintJob(const String &job, const String &printer) {
   // Ship each chunk as soon as it lands rather than letting Nagle hold it.
   tcp.setNoDelay(true);
 
+  // Two-sided is asked for in PJL, ahead of the document. Port 9100 has no
+  // way to carry job options otherwise -- it is a raw byte pipe.
+  //
+  // Only written when duplex was requested, so a one-sided job is still the
+  // exact bytes of the PDF and cannot regress. The printer confirms it can do
+  // this: an IPP Validate-Job with sides=two-sided-long-edge returns
+  // successful-ok. Long edge is the binding people mean by "both sides" for
+  // portrait pages.
+  if (duplex) {
+    static const char PJL_DUPLEX[] =
+        "\x1B%-12345X@PJL JOB\r\n"
+        "@PJL SET DUPLEX=ON\r\n"
+        "@PJL SET BINDING=LONGEDGE\r\n"
+        "@PJL ENTER LANGUAGE=PDF\r\n";
+    tcp.write((const uint8_t *)PJL_DUPLEX, sizeof(PJL_DUPLEX) - 1);
+  }
+
   WiFiClient *stream = http.getStreamPtr();
   int total = http.getSize();  // -1 when the server sends no Content-Length
   // One full TCP segment per write. Static so it is not on the 4 KB task stack.
@@ -622,6 +639,13 @@ bool streamPrintJob(const String &job, const String &printer) {
       }
       yield();
     }
+  }
+  if (duplex) {
+    // Close the job so DUPLEX=ON does not leak into whatever prints next.
+    static const char PJL_END[] =
+        "\x1B%-12345X@PJL EOJ\r\n"
+        "\x1B%-12345X";
+    tcp.write((const uint8_t *)PJL_END, sizeof(PJL_END) - 1);
   }
   uint32_t ms = millis() - started;
   if (ms > 0) {
@@ -660,10 +684,11 @@ bool checkPrintQueue(const String &printer) {
   if (job.length() == 0) {
     return false;
   }
+  // jsonField returns the raw token, so this is "1" or "0" from the Worker.
+  bool duplex = jsonField(body, "duplex") == "1";
   setLedPattern(LED_PRINTING);
-  Serial.print("print job ");
-  Serial.println(job);
-  return streamPrintJob(job, printer);
+  Serial.printf("print job %s%s\n", job.c_str(), duplex ? " (two-sided)" : "");
+  return streamPrintJob(job, printer, duplex);
 }
 
 void loop() {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
 import { PdfDropzone } from "@/components/PdfDropzone"
+import { StagedPrint } from "@/print/StagedPrint"
 import { PrintingAnimation } from "@/components/PrintingAnimation"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
@@ -15,18 +16,12 @@ import {
   type PrintQueue,
   uploadPrint,
 } from "@/lib/api"
-import { formatWhen } from "@/lib/format"
+import { formatBytes, formatWhen } from "@/lib/format"
 import { useRecipients } from "@/recipients/context"
 
 // The queue moves when the bridge finishes a page, not when this tab does
 // anything, so it is re-read on a timer while the page is open.
 const POLL_MS = 4000
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
 
 function ownerLabel(job: PrintJob): string {
   if (job.mine) return "You"
@@ -89,6 +84,7 @@ function JobRow({
           <span className="text-foreground block truncate text-sm font-medium">{job.name}</span>
           <span className="text-muted-foreground block truncate text-xs">
             {ownerLabel(job)} · {formatBytes(job.size)}
+            {job.duplex ? " · both sides" : null}
             {job.status === "failed" && job.error ? ` · ${job.error}` : null}
             {finished && job.finished_at ? ` · ${formatWhen(job.finished_at)}` : null}
           </span>
@@ -110,10 +106,14 @@ function JobRow({
         </span>
       </div>
 
-      {job.status === "queued" && job.mine ? (
+      {job.mine && job.status !== "printing" ? (
         <button
           type="button"
-          aria-label={`Remove ${job.name} from the queue`}
+          aria-label={
+            job.status === "queued"
+              ? `Remove ${job.name} from the queue`
+              : `Clear ${job.name} from the history`
+          }
           disabled={busy}
           onClick={() => onCancel(job.id)}
           className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-9 shrink-0 place-items-center rounded-xl outline-none focus-visible:ring-3 disabled:opacity-50"
@@ -136,6 +136,8 @@ export function PrintView() {
   const [queue, setQueue] = useState<PrintQueue | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [uploading, setUploading] = useState(0)
+  const [staged, setStaged] = useState<File[]>([])
+  const [duplex, setDuplex] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
@@ -158,39 +160,52 @@ export function PrintView() {
     }
   }, [refresh])
 
-  const addFiles = useCallback(
-    async (files: File[]) => {
-      const pdfs = files.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name))
-      const rejected = files.length - pdfs.length
-      if (rejected > 0) {
-        toast.error(
-          rejected === 1
-            ? "That file is not a PDF. Press ⌘P and choose Save as PDF first."
-            : `${rejected} files are not PDFs. Press ⌘P and choose Save as PDF first.`,
-        )
-      }
-      for (const file of pdfs) {
-        setUploading((n) => n + 1)
-        try {
-          const next = await uploadPrint(file)
-          setQueue(next)
-          const me = next.jobs.find((j) => j.id === next.id)
-          toast.success(
-            me?.position && me.position > 1
-              ? `${file.name} queued — #${me.position} in line`
-              : `${file.name} queued`,
-          )
-        } catch (error) {
-          toast.error(error instanceof Error ? error.message : `Could not queue ${file.name}`)
-        } finally {
-          setUploading((n) => n - 1)
-        }
-      }
-    },
-    [],
-  )
+  // Dropping a file stages it. Nothing is sent until Print is pressed, so the
+  // preview and the sides choice both apply to what actually gets printed.
+  const addFiles = useCallback((files: File[]) => {
+    const pdfs = files.filter((f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name))
+    const rejected = files.length - pdfs.length
+    if (rejected > 0) {
+      toast.error(
+        rejected === 1
+          ? "That file is not a PDF. Press ⌘P and choose Save as PDF first."
+          : `${rejected} files are not PDFs. Press ⌘P and choose Save as PDF first.`,
+      )
+    }
+    if (pdfs.length) {
+      setStaged((prev) => [...prev, ...pdfs])
+    }
+  }, [])
 
-  const cancel = useCallback(async (id: string) => {
+  const printStaged = useCallback(async () => {
+    const files = staged
+    let sent = 0
+    for (const file of files) {
+      setUploading((n) => n + 1)
+      try {
+        const next = await uploadPrint(file, { duplex })
+        setQueue(next)
+        sent++
+        const me = next.jobs.find((j) => j.id === next.id)
+        toast.success(
+          me?.position && me.position > 1
+            ? `${file.name} queued — #${me.position} in line`
+            : `${file.name} queued`,
+        )
+      } catch (error) {
+        toast.error(error instanceof Error ? error.message : `Could not queue ${file.name}`)
+      } finally {
+        setUploading((n) => n - 1)
+      }
+    }
+    // Only clear what actually got through, so a failure leaves the file
+    // staged and retryable rather than silently dropped.
+    if (sent === files.length) {
+      setStaged([])
+    }
+  }, [staged, duplex])
+
+  const remove = useCallback(async (id: string) => {
     setBusyId(id)
     try {
       setQueue(await cancelPrint(id))
@@ -271,7 +286,17 @@ export function PrintView() {
         </Alert>
       ) : null}
 
-      <PdfDropzone onFiles={(files) => void addFiles(files)} disabled={uploading > 0} maxBytes={PRINT_MAX_BYTES} />
+      <PdfDropzone onFiles={addFiles} disabled={uploading > 0} maxBytes={PRINT_MAX_BYTES} />
+
+      <StagedPrint
+        files={staged}
+        duplex={duplex}
+        onDuplex={setDuplex}
+        onRemove={(i) => setStaged((prev) => prev.filter((_, n) => n !== i))}
+        onPrint={() => void printStaged()}
+        onDiscard={() => setStaged([])}
+        busy={uploading > 0}
+      />
 
       <section aria-labelledby="print-queue-heading" className="flex flex-col gap-3">
         <div className="flex items-baseline justify-between">
@@ -293,7 +318,7 @@ export function PrintView() {
           <ul className="flex flex-col gap-2">
             <AnimatePresence initial={false}>
               {live.map((job) => (
-                <JobRow key={job.id} job={job} onCancel={(id) => void cancel(id)} busy={busyId === job.id} printerBusy={printerBusy} />
+                <JobRow key={job.id} job={job} onCancel={(id) => void remove(id)} busy={busyId === job.id} printerBusy={printerBusy} />
               ))}
             </AnimatePresence>
           </ul>
@@ -307,7 +332,13 @@ export function PrintView() {
           </h2>
           <ul className="flex flex-col gap-2">
             {history.map((job) => (
-              <JobRow key={job.id} job={job} onCancel={() => undefined} busy={false} printerBusy={printerBusy} />
+              <JobRow
+                key={job.id}
+                job={job}
+                onCancel={(id) => void remove(id)}
+                busy={busyId === job.id}
+                printerBusy={printerBusy}
+              />
             ))}
           </ul>
         </section>

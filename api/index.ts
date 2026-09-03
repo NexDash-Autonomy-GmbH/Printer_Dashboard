@@ -46,6 +46,9 @@ type PrintJob = {
   startedAt?: number;
   finishedAt?: number;
   error?: string;
+  /* Two-sided. The printer confirms it supports it: an IPP Validate-Job with
+     sides=two-sided-long-edge returns successful-ok. */
+  duplex?: boolean;
 };
 
 const PRINT_MAX_BYTES = 25 * 1024 * 1024; // KV's per-value ceiling
@@ -495,6 +498,7 @@ export class PrinterApi extends DurableObject<Env> {
           error: j.error,
           created_at: j.createdAt,
           finished_at: j.finishedAt,
+          duplex: !!j.duplex,
           // 1-based place in line for queued jobs; 0 for the one printing
           position: j.status === "queued" ? ++position : j.status === "printing" ? 0 : null,
         })),
@@ -521,7 +525,10 @@ export class PrinterApi extends DurableObject<Env> {
       if (actor && job.owner !== actor) {
         return json(request, this.env, 403, { ok: false, error: "that is someone else's job" });
       }
-      if (job.status !== "queued") {
+      // Queued means cancel it. Done or failed means clear it from the
+      // history. Only a job on the printer right now is refused: the bridge
+      // is mid-relay and would post a result for something already gone.
+      if (job.status === "printing") {
         return json(request, this.env, 409, { ok: false, error: "that job is already printing" });
       }
       await this.env.PRINT_FILES.delete(`print:${id}`);
@@ -556,6 +563,9 @@ export class PrinterApi extends DurableObject<Env> {
     }
     const rawName = decodeURIComponent(request.headers.get("X-File-Name") || "document.pdf");
     const name = rawName.replace(/[\r\n]/g, " ").slice(0, 120) || "document.pdf";
+    // Anything but an explicit "1" is one-sided, so a missing header keeps
+    // the old behaviour rather than quietly changing what people get.
+    const duplex = (request.headers.get("X-Duplex") || "") === "1";
     const id = crypto.randomUUID();
     await this.env.PRINT_FILES.put(`print:${id}`, bytes, { expirationTtl: PRINT_FILE_TTL_S });
     const job: PrintJob = {
@@ -565,6 +575,7 @@ export class PrinterApi extends DurableObject<Env> {
       size: bytes.byteLength,
       createdAt: now,
       status: "queued",
+      duplex,
     };
     jobs.push(job);
     await this.savePrintJobs(jobs);
@@ -602,6 +613,10 @@ export class PrinterApi extends DurableObject<Env> {
       job: next.id,
       name: next.name,
       size: next.size,
+      // A string, not a number: the bridge's jsonField only reads quoted
+      // values, so a bare 1 would parse as absent and duplex would silently
+      // never happen.
+      duplex: next.duplex ? "1" : "0",
       printer: this.env.PRINTER_HOST || "192.168.68.52",
     });
   }
