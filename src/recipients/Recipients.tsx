@@ -355,7 +355,7 @@ function OverviewView() {
         />
         <StatCard
           label="Last scan"
-          value={last ? last.stage : "None"}
+          value={last ? statusLabel(last.stage) : "None"}
           hint={last ? formatWhen(last.at) : "Nothing yet"}
         />
       </div>
