@@ -397,10 +397,6 @@ function OverviewView() {
           <FieldBox label="Sender" value={state.fromEmail || "—"} />
         </div>
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
-          <span>eSCL scan · PDF mail</span>
-          <span>SNMP when the office box can reach the Xerox</span>
-        </footer>
       </article>
     </div>
   )
@@ -620,7 +616,10 @@ function JobsView() {
               <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
               <td className="px-4 py-2.5">{row.error || statusLabel(row.stage)}</td>
               <td className="px-4 py-2.5 text-muted-foreground">
-                {row.recipients.length ? row.recipients.join(", ") : "nobody"}
+                {/* A dash, not "nobody": the column is a list of addresses,
+                    and an empty one reads better as absent than as a word
+                    competing with the addresses above and below it. */}
+                {row.recipients.length ? row.recipients.join(", ") : "—"}
               </td>
               <td className="px-2 py-2.5 text-right">
                 <button
