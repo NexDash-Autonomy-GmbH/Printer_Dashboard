@@ -29,10 +29,26 @@ export type Env = {
 type Job = {
   id: string;
   source: string;
-  resolve: (result: ScanResult) => void;
+  /* Captured when the scan is queued, not when it finishes: the recipient
+     list belongs to the person who started it, and completion now runs on
+     the bridge's request where there is no signed-in actor to look up. */
+  recipients: string[];
+  startedAt: number;
+  resolve: (outcome: ScanOutcome) => void;
 };
 
 type ScanResult = { pdf?: Uint8Array; error?: string };
+
+/* What the browser is told, and what is recorded, once a scan finishes. */
+type ScanOutcome = {
+  ok: boolean;
+  stage: string;
+  scanned: boolean;
+  emailed: boolean;
+  error?: string;
+  files?: string[];
+  recipients?: string[];
+};
 
 type PrintStatus = "queued" | "printing" | "done" | "failed";
 
@@ -287,6 +303,13 @@ export class PrinterApi extends DurableObject<Env> {
       bridge_online: online,
       scans: await this.scanLog(),
       supplies: await this.supplies(),
+      // So a reopened tab can show a scan that is still running. The scan
+      // itself never depended on the page being open; only the view of it did.
+      scan_in_progress: this.active
+        ? { stage: "scanning", since: this.active.startedAt, source: this.active.source }
+        : this.queued
+          ? { stage: "waiting", since: this.queued.startedAt, source: this.queued.source }
+          : null,
     });
   }
 
@@ -374,20 +397,43 @@ export class PrinterApi extends DurableObject<Env> {
         error: "printer unreachable and the office bridge is not connected",
       });
     }
-    const result = await new Promise<ScanResult>((resolve) => {
+    // The browser's request is only a viewer. Queue the work, then wait to
+    // report it -- the recording and the mail happen on the bridge's request
+    // in finishScan, so closing this tab cannot lose them.
+    const outcome = await new Promise<ScanOutcome>((resolve) => {
       const id = new Date().toISOString().slice(11, 23);
+      const startedAt = Date.now();
       const timer = setTimeout(() => {
+        const job = this.active?.id === id ? this.active : this.queued?.id === id ? this.queued : null;
         if (this.active?.id === id) {
           this.active = null;
         }
         if (this.queued?.id === id) {
           this.queued = null;
         }
-        resolve({ error: "office bridge did not return a scan" });
+        // Record it even if nobody is watching, so a scan that never came
+        // back leaves a trace in the log rather than vanishing.
+        const failed: ScanOutcome = {
+          ok: false,
+          stage: "scan_failed",
+          scanned: false,
+          emailed: false,
+          error: "office bridge did not return a scan",
+        };
+        void this.recordScan({
+          at: Date.now(),
+          name: "",
+          stage: "scan_failed",
+          recipients: job?.recipients ?? recipients,
+          error: failed.error,
+        });
+        resolve(failed);
       }, 180_000);
       this.queued = {
         id,
         source,
+        recipients,
+        startedAt,
         resolve: (value) => {
           clearTimeout(timer);
           resolve(value);
@@ -395,33 +441,28 @@ export class PrinterApi extends DurableObject<Env> {
       };
       this.wakePoll();
     });
-    if (result.error || !result.pdf) {
+    return json(request, this.env, 200, outcome);
+  }
+
+  /**
+   * Everything that happens once the pages are in: record it, and mail it.
+   *
+   * This runs on the bridge's request, not the browser's. It used to run in
+   * the continuation of the page's own POST /api/scan, which meant closing
+   * the tab mid-scan could abort the request that was going to send the
+   * email -- the scan succeeded and the mail silently never left.
+   */
+  private async finishScan(job: Job, result: ScanResult): Promise<ScanOutcome> {
+    const recipients = job.recipients;
+    if (result.error || !result.pdf || result.pdf.byteLength === 0) {
       const error = result.error || "empty scan";
-      await this.recordScan({
-        at: Date.now(),
-        name: "",
-        stage: "scan_failed",
-        recipients,
-        error,
-      });
-      return json(request, this.env, 200, {
-        ok: false,
-        stage: "scan_failed",
-        scanned: false,
-        emailed: false,
-        error,
-      });
+      await this.recordScan({ at: Date.now(), name: "", stage: "scan_failed", recipients, error });
+      return { ok: false, stage: "scan_failed", scanned: false, emailed: false, error };
     }
     const name = `scan_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
     if (recipients.length === 0) {
       await this.recordScan({ at: Date.now(), name, stage: "saved", recipients });
-      return json(request, this.env, 200, {
-        ok: true,
-        stage: "saved",
-        scanned: true,
-        emailed: false,
-        files: [name],
-      });
+      return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
     try {
       await sendSmtp(
@@ -442,24 +483,10 @@ export class PrinterApi extends DurableObject<Env> {
     } catch (error) {
       const message = error instanceof Error ? error.message : "mail failed";
       await this.recordScan({ at: Date.now(), name, stage: "mail_failed", recipients, error: message });
-      return json(request, this.env, 200, {
-        ok: false,
-        stage: "mail_failed",
-        scanned: true,
-        emailed: false,
-        error: message,
-        files: [name],
-      });
+      return { ok: false, stage: "mail_failed", scanned: true, emailed: false, error: message, files: [name] };
     }
     await this.recordScan({ at: Date.now(), name, stage: "sent", recipients });
-    return json(request, this.env, 200, {
-      ok: true,
-      stage: "sent",
-      scanned: true,
-      emailed: true,
-      files: [name],
-      recipients,
-    });
+    return { ok: true, stage: "sent", scanned: true, emailed: true, files: [name], recipients };
   }
 
   // ---- print queue --------------------------------------------------------
@@ -740,7 +767,11 @@ export class PrinterApi extends DurableObject<Env> {
       if (this.queued?.id === id) {
         this.queued = null;
       }
-      job.resolve(errMsg ? { error: errMsg } : { pdf: buf });
+      // Finish on this request, the bridge's, which is alive regardless of
+      // what the browser did. The waiter -- if the page is still open -- is
+      // handed the finished outcome rather than raw bytes.
+      const outcome = await this.finishScan(job, errMsg ? { error: errMsg } : { pdf: buf });
+      job.resolve(outcome);
     }
     return json(request, this.env, 200, { ok: true });
   }
