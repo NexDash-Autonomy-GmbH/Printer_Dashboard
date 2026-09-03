@@ -55,6 +55,10 @@ void setup() {
   delay(200);
   Serial.println();
   Serial.println("nexdash-bridge boot");
+  // A crash and a power-on look identical in the log without this. "Soft WDT
+  // reset" or an exception here means the firmware died rather than the mains.
+  Serial.printf("reset reason: %s  heap %u\n", ESP.getResetReason().c_str(),
+                (unsigned)ESP.getFreeHeap());
   // Started before anything that can block, so the light proves power even if
   // Wi-Fi never comes up.
   pinMode(STATUS_LED, OUTPUT);
@@ -321,6 +325,11 @@ void postError(String resultUrl, const char *encoded) {
 
 static uint32_t lastTelemetry = 0;
 
+static uint32_t lastWebui = 0;
+// True while bytes are being relayed to port 9100 or the printer is being
+// waited on. Nothing optional runs in that window.
+static bool printInFlight = false;
+
 void postTelemetry(const String &printer, bool force = false) {
   if (!force && millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
     return;
@@ -414,7 +423,16 @@ void postTelemetry(const String &printer, bool force = false) {
   // stayed perfectly healthy. Reporting nothing in that state is a worse
   // answer than asking the other door, which knows the same facts and a few
   // SNMP never exposed here.
-  if (toners.length() == 0) {
+  // The web fallback is expensive: an HTTP client plus a 32 KB stream. During
+  // a print, waitForPrinter forces a telemetry post every three seconds while
+  // the relay socket to port 9100 is still open, and doing this on every one
+  // of those put two clients and a 32 KB read against 80 KB of RAM. A job
+  // died mid-relay that way. It now runs on its own clock no matter how often
+  // telemetry is forced, so a forced post during a print reports what SNMP
+  // last said and costs nothing.
+  if (toners.length() == 0 && !printInFlight &&
+      (lastWebui == 0 || millis() - lastWebui > 60000)) {
+    lastWebui = millis();
     WebSupply ws[6];
     WebTray wt[6];
     int nS = 0, nT = 0;
@@ -477,11 +495,12 @@ void postTelemetry(const String &printer, bool force = false) {
   String unused;
   String url = String(API_BASE) + "/bridge/telemetry";
   httpPostBytes(url.c_str(), "application/json", (uint8_t *)json.c_str(), json.length(), unused, true);
-  Serial.printf("telemetry %s  supplies=%d trays=%d pages=%d serial=%s\n",
+  Serial.printf("telemetry %s  supplies=%d trays=%d pages=%d serial=%s heap=%u\n",
                 online ? status : "offline",
                 toners.length() ? (int)(std::count(toners.begin(), toners.end(), '{')) : 0,
                 trays.length() ? (int)(std::count(trays.begin(), trays.end(), '{')) : 0,
-                pages, serial.length() ? serial.c_str() : "-");
+                pages, serial.length() ? serial.c_str() : "-",
+                (unsigned)ESP.getFreeHeap());
 }
 
 // ---- print queue -----------------------------------------------------------
@@ -544,6 +563,10 @@ void postPrintResult(const String &job, const char *encodedError) {
 }
 
 bool streamPrintJob(const String &job, const String &printer) {
+  printInFlight = true;
+  struct ClearOnExit {
+    ~ClearOnExit() { printInFlight = false; }
+  } clearOnExit;
   HTTPClient http;
   http.setTimeout(180000);
   BearSSL::WiFiClientSecure client;
