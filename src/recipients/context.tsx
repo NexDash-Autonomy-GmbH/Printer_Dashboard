@@ -34,6 +34,12 @@ export type RecipientsState = {
   jobMessage: string
   bridgeOnline: boolean
   scans: ScanLog[]
+  /**
+   * A scan the server says is running, which may have been started by a tab
+   * that is now closed. Separate from jobStatus, which only ever describes a
+   * scan this tab started, so restoring the view never fights local state.
+   */
+  remoteScan: { stage: "waiting" | "scanning"; since: number } | null
   supplies: Supplies | null
 }
 
@@ -70,6 +76,9 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
     loadError: null,
     bridgeOnline: Boolean(data.bridge_online),
     scans: data.scans || [],
+    remoteScan: data.scan_in_progress
+      ? { stage: data.scan_in_progress.stage, since: data.scan_in_progress.since }
+      : null,
     supplies: data.supplies || null,
   }
 }
@@ -93,6 +102,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     jobMessage: "",
     bridgeOnline: false,
     scans: [],
+    remoteScan: null,
     supplies: null,
   })
 

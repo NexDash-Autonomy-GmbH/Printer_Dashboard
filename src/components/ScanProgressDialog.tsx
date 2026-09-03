@@ -9,7 +9,13 @@ import { useRecipients } from "@/recipients/context"
  */
 export function ScanProgressDialog() {
   const { state } = useRecipients()
-  if (state.jobStatus !== "scanning") {
+  // Two reasons to be up. jobStatus is this tab's own scan. remoteScan is the
+  // server saying one is running, which is what restores this dialog after the
+  // tab was closed and reopened -- the scan never needed the page to be open,
+  // only the view of it did.
+  const mine = state.jobStatus === "scanning"
+  const restored = !mine && state.remoteScan !== null
+  if (!mine && !restored) {
     return null
   }
 
@@ -28,12 +34,19 @@ export function ScanProgressDialog() {
         {/* The message names the current step, so announce it as it changes.
             The generic "Scanning…" would only repeat the heading. */}
         <p aria-live="polite" className="text-muted-foreground mt-1 text-sm">
-          {state.jobMessage && state.jobMessage !== "Scanning…"
-            ? state.jobMessage
-            : "Talking to the Xerox…"}
+          {restored
+            ? state.remoteScan?.stage === "waiting"
+              ? "Waiting for the office bridge to pick it up…"
+              : "Already running — started from another tab or before this page was reopened."
+            : state.jobMessage && state.jobMessage !== "Scanning…"
+              ? state.jobMessage
+              : "Talking to the Xerox…"}
         </p>
+        {/* The old copy said to keep the page open. That was wrong, and it is
+            worth saying so plainly: the scan and the mail both run on the
+            server, so closing this tab does not stop either. */}
         <p className="text-muted-foreground/80 mt-4 text-xs">
-          Keep this page open until the scan finishes.
+          Safe to close this page — the scan and the email finish without it.
         </p>
       </div>
     </div>
