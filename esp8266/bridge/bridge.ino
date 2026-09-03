@@ -46,7 +46,6 @@ void setLedPattern(uint16_t pattern) {
   }
 }
 
-static const int MAX_PDF_BYTES = 1500000;
 // The printer can stall mid-document while it renders the next band. Eight
 // seconds was cutting scans short; a stall this long is a real fault.
 static const uint32_t SCAN_IDLE_TIMEOUT_MS = 25000;
@@ -700,6 +699,38 @@ void loop() {
   Serial.print("job ");
   Serial.println(job);
 
+  // Clear anything the scanner is still holding.
+  //
+  // It takes one job at a time, and a job that is never released blocks every
+  // scan after it -- reproduced by hand: an abandoned job made the printer
+  // refuse new ones until it was deleted. The bridge releases its own jobs,
+  // but a crash or a power cut between starting and finishing leaves one
+  // stranded, and nothing else ever cleans it up.
+  {
+    HTTPClient st;
+    WiFiClient stClient;
+    st.setTimeout(8000);
+    st.useHTTP10(true);
+    if (st.begin(stClient, "http://" + printer + "/eSCL/ScannerStatus") && st.GET() == 200) {
+      const String body = st.getString();
+      int at = body.indexOf("<pwg:JobUri>");
+      while (at >= 0) {
+        const int end = body.indexOf('<', at + 12);
+        if (end < 0) break;
+        const String uri = body.substring(at + 12, end);
+        HTTPClient del;
+        WiFiClient delClient;
+        if (del.begin(delClient, "http://" + printer + uri)) {
+          Serial.printf("scan: releasing a stranded job %s\n", uri.c_str());
+          del.sendRequest("DELETE");
+          del.end();
+        }
+        at = body.indexOf("<pwg:JobUri>", end);
+      }
+    }
+    st.end();
+  }
+
   const char *input = "Platen";
   if (source == "adf") {
     input = "Feeder";
@@ -710,11 +741,16 @@ void loop() {
     "<pwg:Version>2.6</pwg:Version><scan:Intent>Document</scan:Intent>" +
     "<pwg:InputSource>" + input + "</pwg:InputSource>" +
     "<pwg:DocumentFormat>application/pdf</pwg:DocumentFormat>" +
-    // Colour is kept; the resolution is not. RGB24 at 300 dpi runs an A4 page
-    // past the 1.5 MB cap, which is what was truncating scans. 200 dpi is
-    // about 44% of the data, comfortably inside the cap, quicker to scan and
-    // quicker to push over TLS from an 80 MHz board -- and still well above
-    // what a document being emailed needs.
+    // Colour, at 200 dpi. Both halves of that are measured, not assumed.
+    //
+    // 300 dpi was producing pages too large to move and is gone. Grayscale was
+    // tried as the next lever and rejected: measured on this printer the same
+    // page is 415 KB in RGB24 and 357 KB in Grayscale8, only 1.2x smaller,
+    // because the JPEG inside the PDF already compresses colour efficiently.
+    // Losing colour for 14% is a bad trade.
+    //
+    // If pages must get smaller, resolution is the lever that actually works:
+    // size falls with its square, so 150 dpi is roughly half of 200.
     "<scan:ColorMode>RGB24</scan:ColorMode>" +
     "<scan:XResolution>200</scan:XResolution><scan:YResolution>200</scan:YResolution>" +
     "</scan:ScanSettings>";
@@ -756,6 +792,29 @@ void loop() {
     Serial.println("scan: transfer failed, asking the printer for it again");
     delay(1000);
     ok = relayScan(docUrl, job, relayed);
+  }
+
+  // Did the feeder have more than we sent?
+  //
+  // eSCL scanners differ. Some return one multi-page PDF for a whole feeder
+  // stack; others return a document per sheet and expect the client to keep
+  // asking until 404. This firmware asks once, which is right for the glass --
+  // a second request there returns 404, confirmed against this printer.
+  //
+  // If a feeder scan ever answers 200 here, pages were dropped, and this says
+  // so rather than quietly emailing the first sheet as though it were the lot.
+  if (ok) {
+    HTTPClient more;
+    WiFiClient moreClient;
+    more.setTimeout(15000);
+    more.useHTTP10(true);
+    if (more.begin(moreClient, docUrl)) {
+      if (more.GET() == 200) {
+        Serial.println("scan: WARNING more documents remain for this job -- "
+                       "pages after the first were NOT sent");
+      }
+      more.end();
+    }
   }
 
   // Now the pages can be released, whichever way it went: leaving the job open
