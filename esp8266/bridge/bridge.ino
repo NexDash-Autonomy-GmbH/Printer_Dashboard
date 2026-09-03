@@ -1,13 +1,13 @@
 // ESP8266EX firmware (this board is not an ESP32).
 // Joins office Wi-Fi, long-polls the Worker, scans the Xerox over eSCL and
 // streams queued PDFs into it on port 9100.
-// PDFs are written to LittleFS in 512-byte chunks. A String cannot hold a scan.
+// Nothing is stored on the board. Scans and prints are relayed a buffer at a
+// time, in one pass, so neither RAM nor flash puts a ceiling on a document.
 
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecureBearSSL.h>
-#include <LittleFS.h>
 #include <Ticker.h>
 #include "secrets.h"
 #include "snmp.h"
@@ -46,7 +46,6 @@ void setLedPattern(uint16_t pattern) {
   }
 }
 
-static const char *SCAN_PATH = "/scan.pdf";
 static const int MAX_PDF_BYTES = 1500000;
 // The printer can stall mid-document while it renders the next band. Eight
 // seconds was cutting scans short; a stall this long is a real fault.
@@ -68,19 +67,6 @@ void setup() {
   statusTicker.attach_ms(100, tickStatusLed);
   // TLS is CPU-bound on this chip; the relay rate roughly tracks this number.
   Serial.printf("cpu %u MHz\n", ESP.getCpuFreqMHz());
-  if (!LittleFS.begin()) {
-    LittleFS.format();
-    LittleFS.begin();
-  }
-  {
-    // The scan is buffered to LittleFS before it is pushed on, so this number
-    // is the real ceiling on a scan and worth stating rather than assuming.
-    FSInfo info;
-    if (LittleFS.info(info)) {
-      Serial.printf("fs: %u bytes total, %u used\n",
-                    (unsigned)info.totalBytes, (unsigned)info.usedBytes);
-    }
-  }
   WiFi.mode(WIFI_STA);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
   WiFi.setAutoReconnect(true);
@@ -230,158 +216,6 @@ int startScanJob(String printerBase, const char *xml, String &loc) {
     collectLocation(http, printerBase, loc);
   }
   http.end();
-  return code;
-}
-
-bool downloadToFile(String url, const char *path) {
-  const uint32_t fetchStart = millis();
-  LittleFS.remove(path);
-  HTTPClient http;
-  http.setTimeout(180000);
-  // Ask in HTTP/1.0, and never remove this without reading the whole comment.
-  //
-  // The printer answers NextDocument with Transfer-Encoding: chunked. This
-  // function reads the socket directly through getStreamPtr(), and
-  // ESP8266HTTPClient only de-chunks inside getString() and writeToStream() --
-  // never on the stream itself. So over 1.1 every chunk-size line lands in the
-  // middle of the PDF: the page rendered cleanly at the top and then dissolved
-  // into bands of colour where the injected bytes wrecked the JPEG.
-  //
-  // HTTP/1.0 has no chunked encoding, so the body arrives as the body and the
-  // server closes the connection to mark the end.
-  http.useHTTP10(true);
-  WiFiClient client;
-  if (!http.begin(client, url)) {
-    return false;
-  }
-  int code = http.GET();
-  if (code != 200) {
-    http.end();
-    return false;
-  }
-  File f = LittleFS.open(path, "w");
-  if (!f) {
-    http.end();
-    return false;
-  }
-  // -1 when the printer sends no Content-Length, which it usually does not:
-  // it streams the PDF while still rendering it.
-  const int expected = http.getSize();
-  WiFiClient *stream = http.getStreamPtr();
-  uint8_t buf[512];
-  int written = 0;
-  bool hitCap = false;
-  bool wentQuiet = false;
-  uint32_t idleSince = millis();
-  while (http.connected()) {
-    if (written >= MAX_PDF_BYTES) {
-      hitCap = true;
-      break;
-    }
-    size_t avail = stream->available();
-    if (avail) {
-      size_t chunk = avail;
-      if (chunk > sizeof(buf)) {
-        chunk = sizeof(buf);
-      }
-      int n = stream->readBytes(buf, chunk);
-      if (n <= 0) {
-        break;
-      }
-      if (f.write(buf, n) != (size_t)n) {
-        f.close();
-        http.end();
-        return false;
-      }
-      written += n;
-      idleSince = millis();
-    } else {
-      // The printer renders as it sends and can pause mid-document, so this
-      // is deliberately patient. Running out is still a failure, not an end.
-      if (millis() - idleSince > SCAN_IDLE_TIMEOUT_MS) {
-        wentQuiet = true;
-        break;
-      }
-      delay(1);
-    }
-    yield();
-  }
-  f.close();
-  http.end();
-
-  // Anything short of the whole document is a corrupt PDF, and a corrupt PDF
-  // that reports success gets emailed. This used to `return written > 4`,
-  // which called every truncation a win: a scan over the cap arrived as a
-  // page that renders cleanly at the top and dissolves into colour bands
-  // where the JPEG stream was cut.
-  if (written <= 4) {
-    Serial.println("scan: nothing arrived");
-    return false;
-  }
-  if (hitCap) {
-    Serial.printf("scan: hit the %d byte cap, refusing to send a truncated pdf\n", MAX_PDF_BYTES);
-    return false;
-  }
-  if (wentQuiet) {
-    Serial.printf("scan: printer went quiet after %d bytes, refusing to send a truncated pdf\n", written);
-    return false;
-  }
-  if (expected > 0 && written < expected) {
-    Serial.printf("scan: got %d of %d bytes, refusing to send a truncated pdf\n", written, expected);
-    return false;
-  }
-  Serial.printf("scan: %d bytes\n", written);
-  return true;
-}
-
-int httpPostFile(String url, const char *ctype, const char *path, String &out) {
-  File f = LittleFS.open(path, "r");
-  if (!f) {
-    return -1;
-  }
-  size_t len = f.size();
-  // TLS on this chip is CPU-bound, so this leg is the suspected cost of a
-  // scan. Timed separately from the fetch so the two can be compared rather
-  // than argued about.
-  const uint32_t upStart = millis();
-  HTTPClient http;
-  int code = -1;
-  out = "";
-  http.setTimeout(180000);
-  if (isHttps(url)) {
-    BearSSL::WiFiClientSecure client;
-    client.setInsecure();
-    if (!http.begin(client, url)) {
-      f.close();
-      return -1;
-    }
-    addAuth(http);
-    http.addHeader("Content-Type", ctype);
-    code = http.sendRequest("POST", &f, len);
-    if (code > 0) {
-      out = http.getString();
-    }
-    const uint32_t took = millis() - upStart;
-    Serial.printf("upload: %u bytes over TLS in %lu ms (%lu KB/s) -> %d\n",
-                  (unsigned)len, (unsigned long)took,
-                  (unsigned long)(took > 0 ? (len / took) * 1000 / 1024 : 0), code);
-    http.end();
-    f.close();
-    return code;
-  }
-  WiFiClient client;
-  if (!http.begin(client, url)) {
-    f.close();
-    return -1;
-  }
-  addAuth(http);
-  http.addHeader("Content-Type", ctype);
-  code = http.sendRequest("POST", &f, len);
-  if (code > 0) {
-    out = http.getString();
-  }
-  http.end();
-  f.close();
   return code;
 }
 
@@ -653,6 +487,141 @@ bool streamPrintJob(const String &job, const String &printer, bool duplex) {
   return true;
 }
 
+/**
+ * Relay the scan straight from the printer to the Worker.
+ *
+ * The board is a bridge, so it should carry bytes, not keep them. It used to
+ * download the whole PDF to the board's flash and only then upload it, which made the
+ * board the bottleneck three ways: the two transfers ran one after the other
+ * instead of together, every byte was written to flash and read back, and the
+ * filesystem put a hard ceiling on a scan -- fine for one page, hopeless for a
+ * feeder full of them.
+ *
+ * Now one pass. Bytes arrive from the printer and leave for the Worker in the
+ * same loop, so nothing larger than the buffer is ever held and there is no
+ * size limit left to hit.
+ *
+ * Chunked going out, because the size is not known when the request starts:
+ * the printer streams the document while it is still rendering it and sends no
+ * Content-Length. HTTPClient cannot POST a body of unknown length, so the
+ * request is written by hand over a TLS socket.
+ *
+ * Asks the printer in HTTP/1.0 for the reason spelled out at the top of this
+ * file: over 1.1 it answers chunked, and reading that raw would fold the
+ * chunk-size lines into the PDF.
+ */
+bool relayScan(const String &docUrl, const String &job, uint32_t &bytesOut) {
+  bytesOut = 0;
+
+  HTTPClient src;
+  WiFiClient srcClient;
+  src.setTimeout(180000);
+  src.useHTTP10(true);
+  if (!src.begin(srcClient, docUrl)) {
+    Serial.println("scan: cannot open the document");
+    return false;
+  }
+  const int code = src.GET();
+  if (code != 200) {
+    Serial.printf("scan: document GET -> %d\n", code);
+    src.end();
+    return false;
+  }
+  WiFiClient *in = src.getStreamPtr();
+
+  // The Worker end. Host is parsed off API_BASE rather than hardcoded so the
+  // two cannot drift apart.
+  String host = String(API_BASE);
+  host.replace("https://", "");
+  host.replace("http://", "");
+  const int slash = host.indexOf('/');
+  if (slash > 0) {
+    host = host.substring(0, slash);
+  }
+
+  BearSSL::WiFiClientSecure out;
+  out.setInsecure();
+  if (!out.connect(host.c_str(), 443)) {
+    Serial.println("scan: cannot reach the worker");
+    src.end();
+    return false;
+  }
+  out.setNoDelay(true);
+
+  String head = "POST /bridge/result?job=" + job + " HTTP/1.1\r\n";
+  head += "Host: " + host + "\r\n";
+  head += "Authorization: Bearer " + String(BRIDGE_TOKEN) + "\r\n";
+  head += "Content-Type: application/pdf\r\n";
+  head += "Transfer-Encoding: chunked\r\n";
+  head += "Connection: close\r\n\r\n";
+  out.print(head);
+
+  static uint8_t buf[512];
+  uint32_t idleSince = millis();
+  const uint32_t started = millis();
+  bool wentQuiet = false;
+  while (src.connected() || in->available()) {
+    const size_t avail = in->available();
+    if (avail) {
+      const size_t want = avail > sizeof(buf) ? sizeof(buf) : avail;
+      const int n = in->readBytes(buf, want);
+      if (n <= 0) {
+        break;
+      }
+      // chunk: hex length, CRLF, payload, CRLF
+      out.printf("%x\r\n", (unsigned)n);
+      if (out.write(buf, n) != (size_t)n) {
+        Serial.println("scan: worker stopped accepting data");
+        out.stop();
+        src.end();
+        return false;
+      }
+      out.print("\r\n");
+      bytesOut += n;
+      idleSince = millis();
+    } else {
+      if (millis() - idleSince > SCAN_IDLE_TIMEOUT_MS) {
+        wentQuiet = true;
+        break;
+      }
+      delay(1);
+      yield();
+    }
+  }
+  src.end();
+
+  if (wentQuiet || bytesOut <= 4) {
+    // Never close the chunked body on a short read: an unterminated request is
+    // rejected, which is what should happen. Finishing it cleanly would hand
+    // the Worker a truncated PDF and call it a success.
+    Serial.printf("scan: incomplete after %u bytes, abandoning\n", (unsigned)bytesOut);
+    out.stop();
+    return false;
+  }
+  out.print("0\r\n\r\n");
+
+  // Read just the status line; the body is a small JSON ack.
+  String status;
+  const uint32_t deadline = millis() + 30000;
+  while (millis() < deadline && out.connected()) {
+    if (out.available()) {
+      status = out.readStringUntil('\n');
+      break;
+    }
+    delay(5);
+    yield();
+  }
+  out.stop();
+
+  const uint32_t took = millis() - started;
+  const bool ok = status.indexOf("200") > 0;
+  Serial.printf("scan: relayed %u bytes in %lu ms (%lu KB/s) -> %s\n",
+                (unsigned)bytesOut, (unsigned long)took,
+                (unsigned long)(took > 0 ? ((uint32_t)bytesOut / took) * 1000 / 1024 : 0),
+                ok ? "ok" : status.c_str());
+  return ok;
+}
+
 /** Ask for the next print job. Returns true if one was handled, so the caller skips telemetry this pass. */
 bool checkPrintQueue(const String &printer) {
   // Someone may be printing straight from a laptop. Do not pile a job on top.
@@ -747,41 +716,36 @@ void loop() {
     docUrl.remove(docUrl.length() - 1);
   }
   docUrl += "/NextDocument";
-  if (!downloadToFile(docUrl, SCAN_PATH)) {
+  // Scanning and sending now happen together, so the dashboard is told the
+  // bytes are moving before the relay starts rather than between two separate
+  // transfers. There is no size to report yet: with one pass there is no point
+  // at which the whole document has been counted.
+  {
+    String ignored;
+    httpPostBytes(String(API_BASE) + "/bridge/progress?job=" + job + "&phase=uploading",
+                  "text/plain", NULL, 0, ignored, true);
+  }
+
+  uint32_t relayed = 0;
+  const bool ok = relayScan(docUrl, job, relayed);
+
+  // Tell the printer the job is collected either way, so a failure does not
+  // leave it holding pages.
+  {
     HTTPClient del;
     WiFiClient delClient;
     if (del.begin(delClient, loc)) {
       del.sendRequest("DELETE");
       del.end();
     }
-    postError(resultUrl, "no%20document");
+  }
+
+  if (!ok) {
+    // relayScan posts nothing on failure -- it abandons the request without
+    // closing the chunked body, so the Worker never sees a document. The job
+    // still needs an answer or the dashboard waits out the full timeout.
+    postError(resultUrl, "scan%20transfer%20failed");
     return;
   }
-
-  // Tell the dashboard the scan is off the printer and now going up. This is
-  // the only transition the Worker cannot see for itself -- its front door
-  // buffers request bodies, so by the time it handles the upload the upload is
-  // over. Costs one small request, and the upload is the long phase, so it is
-  // the one worth knowing about.
-  {
-    File f = LittleFS.open(SCAN_PATH, "r");
-    const size_t size = f ? f.size() : 0;
-    if (f) {
-      f.close();
-    }
-    String ignored;
-    httpPostBytes(String(API_BASE) + "/bridge/progress?job=" + job + "&phase=uploading&bytes=" + String((uint32_t)size),
-                  "text/plain", NULL, 0, ignored, true);
-  }
-
-  String unused;
-  httpPostFile(resultUrl, "application/pdf", SCAN_PATH, unused);
-  HTTPClient del;
-  WiFiClient delClient;
-  if (del.begin(delClient, loc)) {
-    del.sendRequest("DELETE");
-    del.end();
-  }
-  LittleFS.remove(SCAN_PATH);
   Serial.println("posted pdf");
 }
