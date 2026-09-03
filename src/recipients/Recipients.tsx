@@ -385,18 +385,17 @@ function OverviewView() {
           </div>
         </header>
 
-        <div className="grid gap-3 p-5 sm:grid-cols-2">
-          <FieldBox label="Host" value={state.printerHost || "192.168.68.52"} mono />
+        {/* One tile, so no two-column grid: with Host gone a grid left Sender
+            stranded at half width against empty space.
+            The toner bars were a duplicate of the Supplies screen and are
+            simply gone. The printer's address is a different case -- it is now
+            shown nowhere in the dashboard at all. state.printerHost and the
+            Worker's web_ui field are both still populated, so putting it back
+            is a line of JSX rather than a round trip; that is why they are
+            kept rather than pruned as dead. */}
+        <div className="p-5">
           <FieldBox label="Sender" value={state.fromEmail || "—"} />
         </div>
-
-        {state.supplies?.toners.length ? (
-          <div className="flex flex-col gap-3 border-t border-border px-5 py-4">
-            {state.supplies.toners.map((row) => (
-              <SupplyRow key={row.name} name={row.name} pct={row.pct} color={row.color} />
-            ))}
-          </div>
-        ) : null}
 
         <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-5 py-3 text-xs text-muted-foreground">
           <span>eSCL scan · PDF mail</span>
