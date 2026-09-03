@@ -93,11 +93,14 @@ export function ThemeProvider({
 
     return defaultTheme
   })
-  const [resolvedTheme, setResolvedTheme] = React.useState<ResolvedTheme>(() => {
-    const storedTheme = localStorage.getItem(storageKey)
-    const initial = isTheme(storedTheme) ? storedTheme : defaultTheme
-    return initial === "system" ? getSystemTheme() : initial
-  })
+  // What the operating system is asking for. The only thing that changes it is
+  // the media query firing, which is an event rather than a render, so nothing
+  // here sets state while rendering.
+  const [systemTheme, setSystemTheme] = React.useState<ResolvedTheme>(getSystemTheme)
+  // Derived, not stored. Holding this as its own state meant two copies of one
+  // fact kept in step by an effect, and the effect was the bug: it set state
+  // synchronously on every theme change, which cascades renders.
+  const resolvedTheme: ResolvedTheme = theme === "system" ? systemTheme : theme
 
   const setTheme = React.useCallback(
     (nextTheme: Theme) => {
@@ -107,19 +110,17 @@ export function ThemeProvider({
     [storageKey]
   )
 
+  // Paints the document. Touches the DOM and nothing else.
   const applyTheme = React.useCallback(
-    (nextTheme: Theme) => {
+    (nextTheme: ResolvedTheme) => {
       const root = document.documentElement
-      const resolvedTheme =
-        nextTheme === "system" ? getSystemTheme() : nextTheme
       const restoreTransitions = disableTransitionOnChange
         ? disableTransitionsTemporarily()
         : null
 
       root.classList.remove("light", "dark")
-      root.classList.add(resolvedTheme)
-      root.style.colorScheme = resolvedTheme
-      setResolvedTheme(resolvedTheme)
+      root.classList.add(nextTheme)
+      root.style.colorScheme = nextTheme
 
       if (restoreTransitions) {
         restoreTransitions()
@@ -129,15 +130,17 @@ export function ThemeProvider({
   )
 
   React.useEffect(() => {
-    applyTheme(theme)
+    applyTheme(resolvedTheme)
+  }, [resolvedTheme, applyTheme])
 
-    if (theme !== "system") {
-      return undefined
-    }
-
+  // Subscribed for the life of the provider, not only while following the
+  // system. Attaching it conditionally left a stale reading behind: change the
+  // OS appearance while pinned to light, then switch to System, and the old
+  // value was what got painted.
+  React.useEffect(() => {
     const mediaQuery = window.matchMedia(COLOR_SCHEME_QUERY)
-    const handleChange = () => {
-      applyTheme("system")
+    const handleChange = (event: MediaQueryListEvent) => {
+      setSystemTheme(event.matches ? "dark" : "light")
     }
 
     mediaQuery.addEventListener("change", handleChange)
@@ -145,7 +148,7 @@ export function ThemeProvider({
     return () => {
       mediaQuery.removeEventListener("change", handleChange)
     }
-  }, [theme, applyTheme])
+  }, [])
 
   React.useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

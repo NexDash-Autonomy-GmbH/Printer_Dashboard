@@ -113,8 +113,14 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }
   }, [])
 
+  // Read by the polling interval, which must not restart every time the job
+  // status changes. Written in an effect rather than during render: a render
+  // can be thrown away or replayed, and a ref written then is a side effect
+  // escaping into a phase that is allowed to happen more than once.
   const scanningRef = useRef(false)
-  scanningRef.current = state.jobStatus === "scanning"
+  useEffect(() => {
+    scanningRef.current = state.jobStatus === "scanning"
+  }, [state.jobStatus])
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
