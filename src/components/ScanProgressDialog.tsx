@@ -14,20 +14,40 @@ import { useRecipients } from "@/recipients/context"
  */
 
 /**
- * The phases, in order, with how far through each one is.
+ * The stages, as the job actually happens.
  *
- * Deliberately phase-based rather than a byte percentage. The Worker's front
- * door buffers request bodies before the Durable Object sees them, so it
- * cannot watch the upload arrive; a byte counter there would sit at zero and
- * then jump to done. These four are real transitions the bridge and the
- * Worker actually observe, so the bar never invents movement it cannot see.
+ * Three, not four, because the bridge stopped storing the scan: it now relays
+ * the pages to the Worker while the printer is still producing them. Scanning
+ * and sending are one act, and showing them as two steps made the bar appear
+ * to skip -- the server's "scanning" phase lasts about as long as it takes to
+ * claim the job.
+ *
+ * The server still reports four phases and is right to: it distinguishes
+ * having claimed the job from having started to move bytes. This is the
+ * presentation, and it maps both onto the stage a person can see happening.
+ *
+ * Deliberately not a byte percentage. The Worker's front door buffers request
+ * bodies before the Durable Object sees them, so a byte counter there would
+ * sit at zero and jump to done.
  */
-const PHASES = [
-  { id: "waiting", label: "Waiting for the office bridge", pct: 8 },
-  { id: "scanning", label: "Scanning at the printer", pct: 42 },
-  { id: "uploading", label: "Sending the scan on", pct: 78 },
-  { id: "emailing", label: "Emailing it", pct: 94 },
+const STAGES = [
+  { key: "queued", label: "Queued", detail: "Waiting for the office bridge", pct: 10 },
+  {
+    key: "running",
+    label: "Scanning",
+    detail: "Scanning and sending at the same time",
+    pct: 62,
+  },
+  { key: "email", label: "Email", detail: "Emailing it", pct: 92 },
 ] as const
+
+/** Which visible stage a reported phase belongs to. */
+function stageOf(phase: string | undefined) {
+  if (phase === "waiting") return STAGES[0]
+  if (phase === "scanning" || phase === "uploading") return STAGES[1]
+  if (phase === "emailing") return STAGES[2]
+  return undefined
+}
 
 export function ScanProgressDialog() {
   const { state } = useRecipients()
@@ -49,9 +69,9 @@ export function ScanProgressDialog() {
   // for a restored view meant the person who pressed Scan watched a bar that
   // never moved, while someone who merely reopened the tab got the live one.
   // The context re-reads state every few seconds, so this advances for both.
-  const phase = PHASES.find((p) => p.id === remote?.stage)
-  const pct = phase?.pct ?? 8
-  const heading = phase?.label ?? "Talking to the Xerox…"
+  const stage = stageOf(remote?.stage)
+  const pct = stage?.pct ?? 10
+  const heading = stage?.detail ?? "Talking to the Xerox…"
 
   return (
     <div
@@ -70,7 +90,7 @@ export function ScanProgressDialog() {
             job actually is, whereas jobMessage is whatever this tab last set
             before it lost track. */}
         <p aria-live="polite" className="text-muted-foreground mt-1 text-sm">
-          {phase ? heading : state.jobMessage || heading}
+          {stage ? heading : state.jobMessage || heading}
         </p>
 
         <div
@@ -88,22 +108,16 @@ export function ScanProgressDialog() {
         </div>
 
         <ol className="text-muted-foreground/90 mt-3 flex justify-between text-[11px]">
-          {PHASES.map((p) => {
-            const done = pct > p.pct
-            const here = remote?.stage === p.id
+          {STAGES.map((st) => {
+            const done = pct > st.pct
+            const here = stage?.key === st.key
             return (
               <li
-                key={p.id}
+                key={st.key}
                 aria-current={here ? "step" : undefined}
                 className={here ? "text-foreground font-medium" : done ? "text-foreground/70" : ""}
               >
-                {p.id === "waiting"
-                  ? "Queued"
-                  : p.id === "scanning"
-                    ? "Scanning"
-                    : p.id === "uploading"
-                      ? "Sending"
-                      : "Email"}
+                {st.label}
               </li>
             )
           })}
