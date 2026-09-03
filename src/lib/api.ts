@@ -33,9 +33,12 @@ export type Supplies = {
   pages?: number | null
   uptime_ticks?: number
   console?: string
-  toners: Array<{ name: string; pct: number | null; color: string }>
-  trays: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>
-  alerts: Array<{ severity: string; desc: string }>
+  /* No longer sent. The bridge stopped gathering these when the Supplies
+     screen was removed, but rows stored before that still carry them, so a
+     reader has to cope with either shape. */
+  toners?: Array<{ name: string; pct: number | null; color: string }>
+  trays?: Array<{ name: string; capacity: number; level: number; pct: number | null; status: string }>
+  alerts?: Array<{ severity: string; desc: string }>
   checked_at: number
 }
 
