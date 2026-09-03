@@ -238,28 +238,51 @@ static bool printInFlight = false;
  * Transfer-Encoding: chunked, and ESP8266HTTPClient only de-chunks inside
  * getString(), so a 1.1 response arrives with chunk-size lines mixed in.
  */
-String scannerState(const String &printer) {
+/**
+ * Reads the scanner's own status: whether it is idle, and whether there is
+ * paper in the feeder.
+ *
+ * The feeder state has no other source. SNMP does not carry it, so before this
+ * the dashboard showed "ADF unknown" permanently -- and since the Scan screen
+ * disables the Feeder option when it knows the tray is empty, "unknown" meant
+ * that guard never fired and someone could start a feeder scan with nothing
+ * in it.
+ *
+ * Asked over HTTP/1.0 deliberately. Over 1.1 this printer answers
+ * Transfer-Encoding: chunked, and ESP8266HTTPClient only de-chunks inside
+ * getString(), so a 1.1 response would arrive with chunk-size lines mixed in.
+ */
+static String tagValue(const String &body, const char *tag) {
+  const String open = String("<") + tag + ">";
+  const int a = body.indexOf(open);
+  if (a < 0) {
+    return "";
+  }
+  const int b = body.indexOf('<', a + open.length());
+  if (b <= a) {
+    return "";
+  }
+  String v = body.substring(a + open.length(), b);
+  v.trim();
+  return v;
+}
+
+void scannerStatus(const String &printer, String &state, String &adf) {
+  state = "";
+  adf = "";
   HTTPClient http;
   WiFiClient client;
   http.setTimeout(6000);
   http.useHTTP10(true);
   if (!http.begin(client, "http://" + printer + "/eSCL/ScannerStatus")) {
-    return "";
+    return;
   }
-  String state;
   if (http.GET() == 200) {
     const String body = http.getString();
-    const int a = body.indexOf("<pwg:State>");
-    if (a >= 0) {
-      const int b = body.indexOf('<', a + 11);
-      if (b > a) {
-        state = body.substring(a + 11, b);
-        state.trim();
-      }
-    }
+    state = tagValue(body, "pwg:State");
+    adf = tagValue(body, "scan:AdfState");
   }
   http.end();
-  return state;
 }
 
 /**
@@ -291,14 +314,17 @@ void postTelemetry(const String &printer, bool force = false) {
   else if (statusN == 6) status = "Stopped";
   else if (statusN == 7) status = "Offline";
 
-  // Never during a print: the relay socket is open and nothing optional runs
-  // in that window.
-  if (!online && !printInFlight) {
-    const String state = scannerState(printer);
-    if (state.length()) {
+  // Asked every cycle now, not only when SNMP is quiet: the feeder state has
+  // no other source. Skipped during a print, when the relay socket is open and
+  // nothing optional should run.
+  String adf;
+  if (!printInFlight) {
+    String state;
+    scannerStatus(printer, state, adf);
+    if (!online && state.length()) {
       // Answering over HTTP means it is on the network whatever SNMP thinks.
-      // The scanner's state says nothing about the print engine, so this
-      // never claims Printing -- only that the printer is answering.
+      // The scanner's state says nothing about the print engine, so this never
+      // claims Printing -- only that the printer is answering.
       online = true;
       status = state == "Idle" ? "Idle" : "Busy";
     }
@@ -307,13 +333,23 @@ void postTelemetry(const String &printer, bool force = false) {
   String json = "{\"online\":";
   json += online ? "true" : "false";
   json += ",\"status\":\"" + String(status) + "\"";
+  if (adf.length()) {
+    json += ",\"adf\":\"" + adf + "\"";
+  }
   json += ",\"checked_at\":" + String((uint32_t)(millis() / 1000)) + "}";
 
   String unused;
   const String url = String(API_BASE) + "/bridge/telemetry";
-  httpPostBytes(url.c_str(), "application/json", (uint8_t *)json.c_str(), json.length(), unused, true);
-  Serial.printf("telemetry %s  heap=%u\n", online ? status : "offline",
-                (unsigned)ESP.getFreeHeap());
+  const int posted = httpPostBytes(url.c_str(), "application/json",
+                                   (uint8_t *)json.c_str(), json.length(), unused, true);
+  // The answer was thrown away before, which is how a Worker rejecting every
+  // report with 400 went unnoticed for hours: the board kept posting happily
+  // into a bin.
+  if (posted != 200) {
+    Serial.printf("telemetry REJECTED %d %s\n", posted, unused.c_str());
+  }
+  Serial.printf("telemetry %s  adf=%s  heap=%u\n", online ? status : "offline",
+                adf.length() ? adf.c_str() : "-", (unsigned)ESP.getFreeHeap());
 }
 
 // ---- print queue -----------------------------------------------------------
