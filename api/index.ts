@@ -34,6 +34,13 @@ type Job = {
      the bridge's request where there is no signed-in actor to look up. */
   recipients: string[];
   startedAt: number;
+  /* Where the job has got to. The Worker can only see two of these by
+     itself -- queued, and claimed -- because the front door buffers request
+     bodies, so by the time it handles the upload the upload is already over.
+     The bridge reports the rest. */
+  phase: "waiting" | "scanning" | "uploading" | "emailing";
+  /* Size of the scan once the bridge knows it, for the dialog to show. */
+  bytes?: number;
   resolve: (outcome: ScanOutcome) => void;
 };
 
@@ -265,6 +272,8 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handlePoll(request);
       case "/bridge/result":
         return this.handleResult(request);
+      case "/bridge/progress":
+        return this.handleProgress(request);
       case "/bridge/telemetry":
         return this.handleTelemetry(request);
       default:
@@ -318,9 +327,19 @@ export class PrinterApi extends DurableObject<Env> {
       // So a reopened tab can show a scan that is still running. The scan
       // itself never depended on the page being open; only the view of it did.
       scan_in_progress: this.active
-        ? { stage: "scanning", since: this.active.startedAt, source: this.active.source }
+        ? {
+            stage: this.active.phase,
+            since: this.active.startedAt,
+            source: this.active.source,
+            bytes: this.active.bytes ?? null,
+          }
         : this.queued
-          ? { stage: "waiting", since: this.queued.startedAt, source: this.queued.source }
+          ? {
+              stage: this.queued.phase,
+              since: this.queued.startedAt,
+              source: this.queued.source,
+              bytes: null,
+            }
           : null,
     });
   }
@@ -446,6 +465,7 @@ export class PrinterApi extends DurableObject<Env> {
         source,
         recipients,
         startedAt,
+        phase: "waiting",
         resolve: (value) => {
           clearTimeout(timer);
           resolve(value);
@@ -466,6 +486,7 @@ export class PrinterApi extends DurableObject<Env> {
    */
   private async finishScan(job: Job, result: ScanResult): Promise<ScanOutcome> {
     const recipients = job.recipients;
+    job.phase = "emailing";
     if (result.error || !result.pdf || result.pdf.byteLength === 0) {
       const error = result.error || "empty scan";
       await this.recordScan({ at: Date.now(), name: "", stage: "scan_failed", recipients, error });
@@ -736,6 +757,29 @@ export class PrinterApi extends DurableObject<Env> {
       return new Response("forbidden", { status: 403 });
     }
     this.lastSeen = Date.now();
+    // A bridge asking for work is not holding any. It scans inline and only
+    // polls again afterwards, so an active job at this point means the bridge
+    // restarted mid-scan and no result will ever arrive for it. Fail it now
+    // rather than leave the dashboard showing a scan that cannot finish --
+    // reflashing the board mid-scan left exactly that stuck on screen.
+    if (this.active) {
+      const orphan = this.active;
+      this.active = null;
+      orphan.resolve({
+        ok: false,
+        stage: "scan_failed",
+        scanned: false,
+        emailed: false,
+        error: "the office bridge restarted mid-scan",
+      });
+      await this.recordScan({
+        at: Date.now(),
+        name: "",
+        stage: "scan_failed",
+        recipients: orphan.recipients,
+        error: "the office bridge restarted mid-scan",
+      });
+    }
     if (!this.queued) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 20_000);
@@ -750,6 +794,7 @@ export class PrinterApi extends DurableObject<Env> {
       return json(request, this.env, 200, { job: "" });
     }
     this.active = this.queued;
+    this.active.phase = "scanning";
     this.queued = null;
     return json(request, this.env, 200, {
       job: this.active.id,
@@ -784,6 +829,33 @@ export class PrinterApi extends DurableObject<Env> {
       // handed the finished outcome rather than raw bytes.
       const outcome = await this.finishScan(job, errMsg ? { error: errMsg } : { pdf: buf });
       job.resolve(outcome);
+    }
+    return json(request, this.env, 200, { ok: true });
+  }
+
+  /**
+   * The bridge saying where it has got to. Costs it one small request, which
+   * buys the only transition the Worker cannot see for itself: the scan is
+   * off the printer and now going up. That is the long part, so it is the one
+   * worth knowing about.
+   */
+  private async handleProgress(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    this.lastSeen = Date.now();
+    const url = new URL(request.url);
+    const id = url.searchParams.get("job") || "";
+    const phase = url.searchParams.get("phase") || "";
+    const bytes = Number(url.searchParams.get("bytes") || "0");
+    const job = this.active?.id === id ? this.active : null;
+    // Only ever moves a job the bridge is actually holding, and only to a
+    // phase we know, so a stale or malformed ping cannot rewrite the state.
+    if (job && (phase === "scanning" || phase === "uploading" || phase === "emailing")) {
+      job.phase = phase;
+      if (bytes > 0) {
+        job.bytes = bytes;
+      }
     }
     return json(request, this.env, 200, { ok: true });
   }

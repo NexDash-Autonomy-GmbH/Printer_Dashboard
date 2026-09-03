@@ -19,7 +19,12 @@ export type PrinterState = {
   workspace_emails?: string[]
   web_ui: string
   /** A scan running right now, whoever started it and whatever tab they used. */
-  scan_in_progress?: { stage: "waiting" | "scanning"; since: number; source: string } | null
+  scan_in_progress?: {
+    stage: "waiting" | "scanning" | "uploading" | "emailing"
+    since: number
+    source: string
+    bytes?: number | null
+  } | null
   bridge_online?: boolean
   scans?: ScanLog[]
   supplies?: Supplies | null

@@ -741,6 +741,22 @@ void loop() {
     return;
   }
 
+  // Tell the dashboard the scan is off the printer and now going up. This is
+  // the only transition the Worker cannot see for itself -- its front door
+  // buffers request bodies, so by the time it handles the upload the upload is
+  // over. Costs one small request, and the upload is the long phase, so it is
+  // the one worth knowing about.
+  {
+    File f = LittleFS.open(SCAN_PATH, "r");
+    const size_t size = f ? f.size() : 0;
+    if (f) {
+      f.close();
+    }
+    String ignored;
+    httpPostBytes(String(API_BASE) + "/bridge/progress?job=" + job + "&phase=uploading&bytes=" + String((uint32_t)size),
+                  "text/plain", NULL, 0, ignored, true);
+  }
+
   String unused;
   httpPostFile(resultUrl, "application/pdf", SCAN_PATH, unused);
   HTTPClient del;
