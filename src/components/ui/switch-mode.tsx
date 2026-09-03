@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, type FC } from "react"
+import { type FC } from "react"
 import { motion } from "motion/react"
 import { IoMoon, IoMoonOutline, IoSunny, IoSunnyOutline } from "react-icons/io5"
 
@@ -27,21 +27,14 @@ export const SwitchMode: FC<SwitchModeProps> = ({
   borderDarkColor = "#4C4C50",
   borderLightColor = "#D8D6E0",
 }) => {
-  const [mounted, setMounted] = useState(false)
   const { resolvedTheme, setTheme } = useTheme()
 
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  if (!mounted) {
-    return (
-      <div
-        style={{ width, height }}
-        className="rounded-full border-2 border-transparent"
-      />
-    )
-  }
+  // There was a mount gate here that rendered an empty placeholder on the
+  // first pass. That pattern exists to avoid a server/client hydration
+  // mismatch, and this is a client-only Vite app with no server render, so it
+  // bought nothing and cost a visible blank slot plus a set-state-in-effect.
+  // The provider resolves the theme in its own initialiser, synchronously, so
+  // the first render already knows which icon to show.
 
   const isDark = resolvedTheme === "dark"
   const iconSize = height * 0.45

@@ -60,5 +60,5 @@ function AnimatedButton({
   )
 }
 
-export { AnimatedButton, animatedButtonVariants }
+export { AnimatedButton }
 export type { AnimatedButtonProps }
