@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, use, useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { createContext, use, useCallback, useEffect, useMemo, useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -136,23 +136,22 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }
   }, [])
 
-  // Read by the polling interval, which must not restart every time the job
-  // status changes. Written in an effect rather than during render: a render
-  // can be thrown away or replayed, and a ref written then is a side effect
-  // escaping into a phase that is allowed to happen more than once.
-  const scanningRef = useRef(false)
-  useEffect(() => {
-    scanningRef.current = state.jobStatus === "scanning"
-  }, [state.jobStatus])
-
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       void refresh()
     }, 0)
+    // Polls right through a scan, deliberately.
+    //
+    // This used to skip while jobStatus was "scanning", which meant the one
+    // moment the page most needed fresh state was the one moment it stopped
+    // asking for it: the scan phase lives on the server, so the progress bar
+    // sat at its starting position for the whole job and only ever moved for
+    // someone who reloaded.
+    //
+    // Safe because applyPrinter writes none of the scan's own fields --
+    // jobStatus and jobMessage are set locally and left alone here -- so a
+    // refresh landing mid-scan cannot overwrite what the scan is doing.
     const id = window.setInterval(() => {
-      if (scanningRef.current) {
-        return
-      }
       void refresh()
     }, 3000)
     return () => {
