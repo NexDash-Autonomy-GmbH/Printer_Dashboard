@@ -45,8 +45,12 @@ export function ScanProgressDialog() {
     return null
   }
 
-  const phase = restored ? PHASES.find((p) => p.id === remote?.stage) : undefined
-  const pct = phase?.pct ?? (mine ? 42 : 8)
+  // The phase comes from the server whoever started the scan. Using it only
+  // for a restored view meant the person who pressed Scan watched a bar that
+  // never moved, while someone who merely reopened the tab got the live one.
+  // The context re-reads state every few seconds, so this advances for both.
+  const phase = PHASES.find((p) => p.id === remote?.stage)
+  const pct = phase?.pct ?? 8
   const heading = phase?.label ?? "Talking to the Xerox…"
 
   return (
@@ -62,8 +66,11 @@ export function ScanProgressDialog() {
           Scanning
         </p>
 
+        {/* The server's phase wins over the local message: it says where the
+            job actually is, whereas jobMessage is whatever this tab last set
+            before it lost track. */}
         <p aria-live="polite" className="text-muted-foreground mt-1 text-sm">
-          {restored ? heading : state.jobMessage || heading}
+          {phase ? heading : state.jobMessage || heading}
         </p>
 
         <div
@@ -83,7 +90,7 @@ export function ScanProgressDialog() {
         <ol className="text-muted-foreground/90 mt-3 flex justify-between text-[11px]">
           {PHASES.map((p) => {
             const done = pct > p.pct
-            const here = restored && remote?.stage === p.id
+            const here = remote?.stage === p.id
             return (
               <li
                 key={p.id}

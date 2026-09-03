@@ -201,6 +201,25 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }
   }, [])
 
+  /**
+   * Puts the scan controls back to rest once a finished job has been read.
+   *
+   * jobStatus was set to sent, saved or failed and left there, so the button
+   * still read "Sent" and the result banner was still up when someone came
+   * back to scan the next thing. Clearing it loses nothing: the toast has
+   * already shown the outcome and Scan jobs keeps it permanently.
+   *
+   * Guarded on the status not having moved, so a scan started inside the
+   * window is never dragged back to idle underneath itself.
+   */
+  const settleLater = useCallback((from: JobStatus) => {
+    window.setTimeout(() => {
+      setState((current) =>
+        current.jobStatus === from ? { ...current, jobStatus: "idle", jobMessage: "" } : current,
+      )
+    }, 6000)
+  }, [])
+
   const scan = useCallback(async () => {
     if (state.source === "adf" && state.adf.toLowerCase().includes("empty")) {
       toast.error("Feeder is empty")
@@ -209,6 +228,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         jobStatus: "failed",
         jobMessage: "Feeder is empty. Load paper or use Glass.",
       }))
+        settleLater("failed")
       return
     }
     setState((current) => ({
@@ -226,6 +246,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         jobMessage: `Sent to ${to}`,
       }))
       toast.success(`Sent to ${to}`)
+      settleLater("sent")
       return
     }
     if (result.stage === "saved") {
@@ -235,6 +256,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         jobMessage: "Scan saved. No recipients, so no mail was sent.",
       }))
       toast.success("Scan saved. No mail sent.")
+      settleLater("saved")
       return
     }
     const message = result.error || "Scan failed"
@@ -244,7 +266,8 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
       jobMessage: result.scanned ? `Scan saved. Mail failed: ${message}` : message,
     }))
     toast.error(message)
-  }, [refresh, state.source])
+    settleLater("failed")
+  }, [refresh, state.source, settleLater])
 
   const actions = useMemo<RecipientsActions>(
     () => ({
