@@ -556,27 +556,44 @@ bool relayScan(const String &docUrl, const String &job, uint32_t &bytesOut) {
   head += "Connection: close\r\n\r\n";
   out.print(head);
 
-  static uint8_t buf[512];
+  // Header, payload and trailer in one buffer, written once.
+  //
+  // Three separate writes per chunk meant three TLS records, each paying its
+  // own header and MAC, for 512 bytes of payload. One write per chunk with a
+  // full TCP segment of payload cuts that overhead by roughly a factor of
+  // nine, and on this chip the encryption is the cost that matters.
+  //
+  // 1460 is one segment; 16 bytes of slack covers the longest hex length plus
+  // both CRLFs.
+  static uint8_t buf[1476];
+  const size_t PAYLOAD = 1460;
   uint32_t idleSince = millis();
   const uint32_t started = millis();
   bool wentQuiet = false;
   while (src.connected() || in->available()) {
     const size_t avail = in->available();
     if (avail) {
-      const size_t want = avail > sizeof(buf) ? sizeof(buf) : avail;
-      const int n = in->readBytes(buf, want);
+      // Leave room at the front for the chunk header so the whole chunk is
+      // one contiguous write. The header is written backwards from the
+      // payload, then the write starts wherever it began.
+      const size_t want = avail > PAYLOAD ? PAYLOAD : avail;
+      const int n = in->readBytes(buf + 10, want);
       if (n <= 0) {
         break;
       }
-      // chunk: hex length, CRLF, payload, CRLF
-      out.printf("%x\r\n", (unsigned)n);
-      if (out.write(buf, n) != (size_t)n) {
+      char hex[10];
+      const int hl = snprintf(hex, sizeof(hex), "%x\r\n", (unsigned)n);
+      uint8_t *start = buf + 10 - hl;
+      memcpy(start, hex, hl);
+      start[hl + n] = '\r';
+      start[hl + n + 1] = '\n';
+      const size_t total = hl + n + 2;
+      if (out.write(start, total) != total) {
         Serial.println("scan: worker stopped accepting data");
         out.stop();
         src.end();
         return false;
       }
-      out.print("\r\n");
       bytesOut += n;
       idleSince = millis();
     } else {
@@ -726,11 +743,23 @@ void loop() {
                   "text/plain", NULL, 0, ignored, true);
   }
 
+  // Streaming keeps no copy, so a failed transfer has nothing to resend from.
+  // The printer does still hold the job, though, and has not been told to
+  // release it -- so the retry is to ask it for the document again. Costs one
+  // extra attempt on a bad Wi-Fi moment and saves walking back to the glass.
+  //
+  // Only once. If the printer has already released the pages the second GET
+  // fails immediately, which is no worse than not trying.
   uint32_t relayed = 0;
-  const bool ok = relayScan(docUrl, job, relayed);
+  bool ok = relayScan(docUrl, job, relayed);
+  if (!ok) {
+    Serial.println("scan: transfer failed, asking the printer for it again");
+    delay(1000);
+    ok = relayScan(docUrl, job, relayed);
+  }
 
-  // Tell the printer the job is collected either way, so a failure does not
-  // leave it holding pages.
+  // Now the pages can be released, whichever way it went: leaving the job open
+  // would block the next scan.
   {
     HTTPClient del;
     WiFiClient delClient;
