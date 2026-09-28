@@ -4,6 +4,10 @@ export type ScanLog = {
   stage: string
   recipients: string[]
   error?: string
+  /** Set while the scan waits for its pages to be checked. The id to review it by. */
+  review?: string
+  /** When the held scan expires unsent, in milliseconds. */
+  expires?: number
 }
 
 export type PrinterState = {
@@ -24,6 +28,8 @@ export type PrinterState = {
     since: number
     source: string
     bytes?: number | null
+    /** It will wait for its pages to be checked rather than be mailed. */
+    review?: boolean
   } | null
   bridge_online?: boolean
   scans?: ScanLog[]
@@ -49,13 +55,15 @@ export type Supplies = {
 
 export type ScanResult = {
   ok: boolean
-  stage?: "scan_failed" | "mail_failed" | "sent" | "saved"
+  stage?: "scan_failed" | "mail_failed" | "sent" | "saved" | "awaiting_review"
   scanned?: boolean
   error?: string
   files?: string[]
   recipients?: string[]
   emailed?: boolean
   log?: string[]
+  /** The held scan's id, when the stage is awaiting_review. */
+  review?: string
 }
 
 // Same origin. /api/* is served by a Pages Function that forwards to the Worker
@@ -179,14 +187,18 @@ export async function removeEmail(email: string): Promise<string[]> {
   }
 }
 
-export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanResult> {
+/** review: hold the PDF for its pages to be checked instead of mailing it on arrival. */
+export async function runScan(
+  source: "auto" | "platen" | "adf",
+  { review = false }: { review?: boolean } = {}
+): Promise<ScanResult> {
   try {
     const res = await request(
       "/api/scan",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source }),
+        body: JSON.stringify({ source, review }),
       },
       180_000
     )
@@ -197,6 +209,75 @@ export async function runScan(source: "auto" | "platen" | "adf"): Promise<ScanRe
     }
     return { ok: false, stage: "scan_failed", error: UNREACHABLE }
   }
+}
+
+// ---- scans held for review --------------------------------------------------
+
+/**
+ * One call to /api/review. The Worker's own message wins when it sent one;
+ * a dropped connection or a timeout becomes `fallback` rather than the
+ * browser's "Failed to fetch".
+ */
+async function reviewCall<T>(
+  fallback: string,
+  call: () => Promise<Response>,
+  read: (res: Response) => Promise<T>
+): Promise<T> {
+  let res: Response
+  try {
+    res = await call()
+  } catch (error) {
+    const why = isAbort(error) ? "it took too long" : "the desk could not reach the server"
+    throw new Error(`${fallback}: ${why}`, { cause: error })
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(SIGNED_OUT)
+  }
+  if (!res.ok) {
+    const body = await readJson<{ error?: string }>(res).catch(() => ({ error: undefined }))
+    throw new Error(body.error || `${fallback} (HTTP ${res.status})`)
+  }
+  return read(res)
+}
+
+/** The held PDF, exactly as scanned. A feeder scan can be 20 MB, hence the wait. */
+export function fetchReviewPdf(id: string): Promise<ArrayBuffer> {
+  return reviewCall(
+    "Could not load the scan",
+    () => request(`/api/review?id=${encodeURIComponent(id)}`, {}, 60_000),
+    (res) => res.arrayBuffer()
+  )
+}
+
+/**
+ * Mails a held scan. `rotate` is one clockwise angle per page, in page order,
+ * in steps of 90. The Worker turns the pages itself, so only the angles
+ * travel; all zeros sends the scan exactly as it came off the scanner.
+ */
+export function sendReview(id: string, rotate: number[]): Promise<ScanResult> {
+  return reviewCall(
+    "Could not send the scan",
+    () =>
+      request(
+        "/api/review",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id, rotate }),
+        },
+        120_000
+      ),
+    (res) => readJson<ScanResult>(res)
+  )
+}
+
+/** Throws a held scan away unsent. */
+export async function discardReview(id: string): Promise<void> {
+  await reviewCall(
+    "Could not discard the scan",
+    () => request(`/api/review?id=${encodeURIComponent(id)}`, { method: "DELETE" }),
+    async () => undefined
+  )
 }
 
 // ---- print queue ------------------------------------------------------------

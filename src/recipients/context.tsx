@@ -4,9 +4,11 @@ import { toast } from "sonner"
 
 import {
   addEmail,
+  discardReview,
   fetchState,
   removeEmail,
   runScan,
+  sendReview,
   type PrinterState,
   type ScanLog,
   type Supplies,
@@ -43,8 +45,22 @@ export type RecipientsState = {
     stage: "waiting" | "scanning" | "uploading" | "emailing"
     since: number
     bytes: number | null
+    /** It will wait for its pages to be checked instead of being mailed. */
+    review: boolean
   } | null
   supplies: Supplies | null
+  /**
+   * "Check pages first": the next scan waits for its pages to be looked at
+   * before it is mailed. Off by default, so pressing Scan still sends in one
+   * click. Remembered in this browser, since whoever feeds landscape pages
+   * tends to do it every time.
+   */
+  checkFirst: boolean
+  /**
+   * The held scan the review dialog shows. `open` goes false on close while
+   * the id stays, so the dialog keeps its pages on screen as it fades out.
+   */
+  review: { id: string; open: boolean } | null
 }
 
 export type RecipientsActions = {
@@ -55,6 +71,12 @@ export type RecipientsActions = {
   /* fresh: ask the bridge for a new reading first. The Refresh button's job. */
   refresh: (options?: { fresh?: boolean }) => Promise<void>
   scan: () => Promise<void>
+  setCheckFirst: (value: boolean) => void
+  openReview: (id: string) => void
+  closeReview: () => void
+  /* Both throw with the reason on failure, for the dialog to show in place. */
+  sendReview: (id: string, rotate: number[]) => Promise<void>
+  discardReview: (id: string) => Promise<void>
 }
 
 export type RecipientsContextValue = {
@@ -91,9 +113,30 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
             stage: data.scan_in_progress.stage,
             since: data.scan_in_progress.since,
             bytes: data.scan_in_progress.bytes ?? null,
+            review: Boolean(data.scan_in_progress.review),
           }
         : null,
     supplies: data.supplies || null,
+  }
+}
+
+const CHECK_FIRST_KEY = "scan-check-pages"
+
+// Storage can throw outright in a private window or with site data blocked.
+// Losing the preference there is fine; losing the page is not.
+function readCheckFirst(): boolean {
+  try {
+    return localStorage.getItem(CHECK_FIRST_KEY) === "1"
+  } catch {
+    return false
+  }
+}
+
+function writeCheckFirst(value: boolean): void {
+  try {
+    localStorage.setItem(CHECK_FIRST_KEY, value ? "1" : "0")
+  } catch {
+    // Not remembered, which only costs choosing it again next time.
   }
 }
 
@@ -118,6 +161,8 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     scans: [],
     remoteScan: null,
     supplies: null,
+    checkFirst: readCheckFirst(),
+    review: null,
   })
 
   const refresh = useCallback(async ({ fresh = false }: { fresh?: boolean } = {}) => {
@@ -236,8 +281,21 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
       jobStatus: "scanning",
       jobMessage: "Scanning…",
     }))
-    const result = await runScan(state.source)
+    const result = await runScan(state.source, { review: state.checkFirst })
     await refresh()
+    // Held for checking: straight into the review, with nothing to report
+    // yet. The scan controls go back to rest, since the scan itself is done
+    // and the held row in Scan jobs is what says it is still unsent.
+    if (result.stage === "awaiting_review" && result.review) {
+      const id = result.review
+      setState((current) => ({
+        ...current,
+        jobStatus: "idle",
+        jobMessage: "",
+        review: { id, open: true },
+      }))
+      return
+    }
     if (result.stage === "sent" || result.emailed) {
       const to = result.recipients?.join(", ") || "recipients"
       setState((current) => ({
@@ -267,7 +325,43 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }))
     toast.error(message)
     settleLater("failed")
-  }, [refresh, state.source, settleLater])
+  }, [refresh, state.source, state.checkFirst, settleLater])
+
+  const closeReview = useCallback(() => {
+    setState((current) =>
+      current.review ? { ...current, review: { ...current.review, open: false } } : current,
+    )
+  }, [])
+
+  const sendHeld = useCallback(
+    async (id: string, rotate: number[]) => {
+      const result = await sendReview(id, rotate)
+      await refresh()
+      const to = result.recipients?.join(", ") || "recipients"
+      setState((current) => ({
+        ...current,
+        review: current.review?.id === id ? { id, open: false } : current.review,
+        // Only if nothing newer owns the banner.
+        ...(current.jobStatus === "scanning" ? {} : { jobStatus: "sent" as const, jobMessage: `Sent to ${to}` }),
+      }))
+      toast.success(`Sent to ${to}`)
+      settleLater("sent")
+    },
+    [refresh, settleLater],
+  )
+
+  const discardHeld = useCallback(
+    async (id: string) => {
+      await discardReview(id)
+      await refresh()
+      setState((current) => ({
+        ...current,
+        review: current.review?.id === id ? { id, open: false } : current.review,
+      }))
+      toast.success("Scan discarded. Nothing was sent.")
+    },
+    [refresh],
+  )
 
   const actions = useMemo<RecipientsActions>(
     () => ({
@@ -286,8 +380,16 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         }),
       refresh,
       scan,
+      setCheckFirst: (value) => {
+        writeCheckFirst(value)
+        setState((current) => ({ ...current, checkFirst: value }))
+      },
+      openReview: (id) => setState((current) => ({ ...current, review: { id, open: true } })),
+      closeReview,
+      sendReview: sendHeld,
+      discardReview: discardHeld,
     }),
-    [add, remove, refresh, scan]
+    [add, remove, refresh, scan, closeReview, sendHeld, discardHeld]
   )
 
   const value = useMemo<RecipientsContextValue>(

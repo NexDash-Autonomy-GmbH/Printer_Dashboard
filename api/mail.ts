@@ -1,3 +1,5 @@
+import type { Env } from "./index";
+
 /**
  * Scan mail, from noreply@nexdash.com through Cloudflare Email Sending.
  *
@@ -70,7 +72,7 @@ export async function sendScan(
     // like. Keep it: it says what to fix, where the message alone may not.
     const code = (error as { code?: string }).code;
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(code ? `${code}: ${message}` : message);
+    throw new Error(code ? `${code}: ${message}` : message, { cause: error });
   }
 }
 
@@ -104,4 +106,26 @@ export async function serveScan(env: MailEnv, pathname: string): Promise<Respons
       "X-Robots-Tag": "noindex",
     },
   });
+}
+
+/**
+ * The one place a scan leaves as mail.
+ *
+ * Both routes out go through here: a scan mailed the moment it arrives, and a
+ * scan sent after its pages were checked. It throws on failure, and callers
+ * record the message as the scan's mail error.
+ */
+export async function mailScan(env: Env, to: string[], name: string, pdf: Uint8Array): Promise<void> {
+  await sendScan(
+    env,
+    {
+      fromEmail: env.MAIL_FROM_EMAIL || "",
+      fromName: env.MAIL_FROM_NAME || "NexDash",
+      linkBase: env.SCAN_LINK_BASE || "",
+    },
+    to,
+    `Xerox scan ${name}`,
+    pdf,
+    name
+  );
 }

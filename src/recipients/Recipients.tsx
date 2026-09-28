@@ -29,6 +29,7 @@ import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
 import { ClearAllButton } from "@/components/ClearAllButton"
 import { Clock } from "@/components/Clock"
+import { Segmented } from "@/components/Segmented"
 import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
@@ -245,6 +246,71 @@ function ScanSourceToggle() {
   )
 }
 
+/**
+ * Whether the scan is mailed the moment it arrives, as it always was, or
+ * held so its pages can be turned first. Sending right away is the default,
+ * so for anyone who never touches this, Scan is still one click.
+ */
+function AfterScanChoice() {
+  const { state, actions } = useRecipients()
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2">
+      <span className="text-muted-foreground text-xs font-medium">After scanning</span>
+      <Segmented
+        label="After scanning"
+        value={state.checkFirst ? "check" : "send"}
+        onChange={(value) => actions.setCheckFirst(value === "check")}
+        disabled={state.jobStatus === "scanning"}
+        options={[
+          { value: "send", label: "Send right away" },
+          { value: "check", label: "Check pages first" },
+        ]}
+      />
+    </div>
+  )
+}
+
+/**
+ * Scans of yours that are held and not yet sent, whichever tab started them.
+ * A tab closed mid-review lands here, so a held scan is never out of sight
+ * on the screen people come back to.
+ */
+function HeldScans() {
+  const { state, actions } = useRecipients()
+  const held = state.scans.filter((row) => row.review)
+  if (held.length === 0) {
+    return null
+  }
+  return (
+    <section
+      aria-labelledby="held-scans-heading"
+      className="border-border bg-card flex flex-col gap-2 rounded-xl border px-4 py-3"
+    >
+      <h3 id="held-scans-heading" className="text-sm font-semibold">
+        {held.length === 1 ? "A scan is waiting to be sent" : `${held.length} scans are waiting to be sent`}
+      </h3>
+      <ul className="flex flex-col gap-2">
+        {held.map((row) => (
+          <li key={row.review} className="flex items-center justify-between gap-3">
+            <span className="text-muted-foreground min-w-0 truncate text-xs">
+              Scanned {formatWhen(row.at)}
+              {row.stage === "mail_failed" ? " · mail failed, try again" : ""}
+            </span>
+            <AnimatedButton
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => row.review && actions.openReview(row.review)}
+            >
+              Review
+            </AnimatedButton>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
 
 function RecipientsScan() {
   const { state, actions } = useRecipients()
@@ -426,8 +492,10 @@ function ScanView() {
           </AlertDescription>
         </Alert>
       ) : null}
+      <HeldScans />
       <JobBanner />
       <ScanSourceToggle />
+      <AfterScanChoice />
       <RecipientsScan />
     </div>
   )
@@ -475,7 +543,7 @@ function JobsView() {
       <div className="flex justify-end">
         <ClearAllButton
           title="Clear your scan jobs?"
-          description="Every scan of yours comes off this list. The PDFs already emailed are not affected."
+          description="Every scan of yours comes off this list, except any still waiting to be sent. The PDFs already emailed are not affected."
           onConfirm={clearAll}
         />
       </div>
@@ -499,7 +567,14 @@ function JobsView() {
               <tr key={`${row.at}-${index}`} className="border-b border-border last:border-0">
                 <td className="whitespace-nowrap px-4 py-2.5">{formatWhen(row.at)}</td>
                 <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
-                <td className="px-4 py-2.5">{row.error || statusLabel(row.stage)}</td>
+                <td className="px-4 py-2.5">
+                  {row.error || statusLabel(row.stage)}
+                  {row.review && row.expires ? (
+                    <span className="text-muted-foreground block text-xs">
+                      Kept until {formatWhen(row.expires)}
+                    </span>
+                  ) : null}
+                </td>
                 <td className="px-4 py-2.5 text-muted-foreground">
                   {/* A dash, not "nobody": the column is a list of addresses,
                       and an empty one reads better as absent than as a word
@@ -507,15 +582,29 @@ function JobsView() {
                   {row.recipients.length ? row.recipients.join(", ") : "—"}
                 </td>
                 <td className="px-2 py-2.5 text-right">
-                  <button
-                    type="button"
-                    aria-label={`Remove the scan from ${formatWhen(row.at)}`}
-                    disabled={busyAt === row.at}
-                    onClick={() => void drop(row.at)}
-                    className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-8 place-items-center rounded-lg outline-none focus-visible:ring-3 disabled:opacity-50"
-                  >
-                    <XIcon className="size-4" />
-                  </button>
+                  {/* A held scan has not been sent, so it gets Review, not ✕:
+                      a one-click remove would throw it away unasked. The
+                      review has Discard, and that one asks first. */}
+                  {row.review ? (
+                    <AnimatedButton
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => row.review && actions.openReview(row.review)}
+                    >
+                      Review
+                    </AnimatedButton>
+                  ) : (
+                    <button
+                      type="button"
+                      aria-label={`Remove the scan from ${formatWhen(row.at)}`}
+                      disabled={busyAt === row.at}
+                      onClick={() => void drop(row.at)}
+                      className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-8 place-items-center rounded-lg outline-none focus-visible:ring-3 disabled:opacity-50"
+                    >
+                      <XIcon className="size-4" />
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
