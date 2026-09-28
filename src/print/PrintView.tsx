@@ -3,6 +3,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react"
 import { useCallback, useEffect, useState } from "react"
 import { toast } from "sonner"
 
+import { ClearAllButton } from "@/components/ClearAllButton"
 import { PdfDropzone } from "@/components/PdfDropzone"
 import { StagedPrint } from "@/print/StagedPrint"
 import { PrintingAnimation } from "@/components/PrintingAnimation"
@@ -10,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty"
 import {
   cancelPrint,
+  clearPrintHistory,
   fetchPrintQueue,
   PRINT_MAX_BYTES,
   type PrintJob,
@@ -216,6 +218,14 @@ export function PrintView() {
     }
   }, [])
 
+  const clearHistory = useCallback(async () => {
+    try {
+      setQueue(await clearPrintHistory())
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not clear the history")
+    }
+  }, [])
+
   const jobs = queue?.jobs ?? []
   const nowPrinting = jobs.find((j) => j.status === "printing") ?? null
   // A claimed job stays in the list until the printer itself confirms it is
@@ -327,9 +337,16 @@ export function PrintView() {
 
       {history.length > 0 ? (
         <section aria-labelledby="print-history-heading" className="flex flex-col gap-3">
-          <h2 id="print-history-heading" className="text-muted-foreground text-sm font-semibold">
-            Recently printed
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 id="print-history-heading" className="text-muted-foreground text-sm font-semibold">
+              Recently printed
+            </h2>
+            <ClearAllButton
+              title="Clear your print history?"
+              description="Every finished and failed print of yours comes off this list. Anything still queued stays."
+              onConfirm={clearHistory}
+            />
+          </div>
           <ul className="flex flex-col gap-2">
             {history.map((job) => (
               <JobRow

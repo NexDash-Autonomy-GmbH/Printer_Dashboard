@@ -417,12 +417,19 @@ export class PrinterApi extends DurableObject<Env> {
     // The log is per person, like recipients, so only your own rows can be
     // cleared. Someone else's is a 404, not a 403: it is not yours to know of.
     if (request.method === "DELETE") {
-      const at = Number(new URL(request.url).searchParams.get("at") || "0");
+      const params = new URL(request.url).searchParams;
+      const log = await this.scanLog();
+      const mine = (row: ScanLog) => !actor || row.owner === actor;
+      // Clear all: every row of yours. Nothing to clear is not an error.
+      if (params.get("all") === "1") {
+        const next = log.filter((row) => !mine(row));
+        await this.ctx.storage.put("scans", next);
+        return json(request, this.env, 200, { ok: true, scans: [] });
+      }
+      const at = Number(params.get("at") || "0");
       if (!Number.isFinite(at) || at <= 0) {
         return json(request, this.env, 400, { ok: false, error: "which scan?" });
       }
-      const log = await this.scanLog();
-      const mine = (row: ScanLog) => !actor || row.owner === actor;
       const next = log.filter((row) => !(row.at === at && mine(row)));
       if (next.length === log.length) {
         return json(request, this.env, 404, { ok: false, error: "no such scan" });
@@ -635,7 +642,19 @@ export class PrinterApi extends DurableObject<Env> {
     }
 
     if (request.method === "DELETE") {
-      const id = new URL(request.url).searchParams.get("id") || "";
+      const params = new URL(request.url).searchParams;
+      // Clear all empties your history: done and failed jobs only. Anything
+      // still queued or printing is left alone, so it cannot cancel a print.
+      if (params.get("all") === "1") {
+        const cleared = jobs.filter(
+          (j) => (j.status === "done" || j.status === "failed") && (!actor || j.owner === actor)
+        );
+        const rest = jobs.filter((j) => !cleared.includes(j));
+        await Promise.all(cleared.map((j) => this.env.PRINT_FILES.delete(`print:${j.id}`)));
+        await this.savePrintJobs(rest);
+        return json(request, this.env, 200, { ok: true, ...this.printView(rest, actor, now) });
+      }
+      const id = params.get("id") || "";
       const job = jobs.find((j) => j.id === id);
       if (!job) {
         return json(request, this.env, 404, { ok: false, error: "no such job" });

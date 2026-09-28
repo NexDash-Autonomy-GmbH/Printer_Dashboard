@@ -27,8 +27,9 @@ import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
+import { ClearAllButton } from "@/components/ClearAllButton"
 import { Clock } from "@/components/Clock"
-import { removeScan } from "@/lib/api"
+import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
 import { useRecipients } from "@/recipients/context"
@@ -457,52 +458,70 @@ function JobsView() {
     }
   }
 
+  const clearAll = async () => {
+    try {
+      await clearScans()
+      await actions.refresh()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not clear the scans")
+    }
+  }
+
   if (state.scans.length === 0) {
     return <EmptyState title="No scans yet" description="Scans you run from the Scan tab are listed here." />
   }
   return (
-    <div className="overflow-x-auto rounded-xl border border-border bg-card">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border text-left text-xs text-muted-foreground">
-            <th className="px-4 py-2 font-medium">When</th>
-            <th className="px-4 py-2 font-medium">File</th>
-            <th className="px-4 py-2 font-medium">Status</th>
-            <th className="px-4 py-2 font-medium">To</th>
-            {/* The remove column carries only buttons, so its header is for
-                screen readers rather than the eye. */}
-            <th className="px-4 py-2 font-medium">
-              <span className="sr-only">Remove</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {state.scans.map((row, index) => (
-            <tr key={`${row.at}-${index}`} className="border-b border-border last:border-0">
-              <td className="whitespace-nowrap px-4 py-2.5">{formatWhen(row.at)}</td>
-              <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
-              <td className="px-4 py-2.5">{row.error || statusLabel(row.stage)}</td>
-              <td className="px-4 py-2.5 text-muted-foreground">
-                {/* A dash, not "nobody": the column is a list of addresses,
-                    and an empty one reads better as absent than as a word
-                    competing with the addresses above and below it. */}
-                {row.recipients.length ? row.recipients.join(", ") : "—"}
-              </td>
-              <td className="px-2 py-2.5 text-right">
-                <button
-                  type="button"
-                  aria-label={`Remove the scan from ${formatWhen(row.at)}`}
-                  disabled={busyAt === row.at}
-                  onClick={() => void drop(row.at)}
-                  className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-8 place-items-center rounded-lg outline-none focus-visible:ring-3 disabled:opacity-50"
-                >
-                  <XIcon className="size-4" />
-                </button>
-              </td>
+    <div className="flex flex-col gap-3">
+      <div className="flex justify-end">
+        <ClearAllButton
+          title="Clear your scan jobs?"
+          description="Every scan of yours comes off this list. The PDFs already emailed are not affected."
+          onConfirm={clearAll}
+        />
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-border bg-card">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-xs text-muted-foreground">
+              <th className="px-4 py-2 font-medium">When</th>
+              <th className="px-4 py-2 font-medium">File</th>
+              <th className="px-4 py-2 font-medium">Status</th>
+              <th className="px-4 py-2 font-medium">To</th>
+              {/* The remove column carries only buttons, so its header is for
+                  screen readers rather than the eye. */}
+              <th className="px-4 py-2 font-medium">
+                <span className="sr-only">Remove</span>
+              </th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {state.scans.map((row, index) => (
+              <tr key={`${row.at}-${index}`} className="border-b border-border last:border-0">
+                <td className="whitespace-nowrap px-4 py-2.5">{formatWhen(row.at)}</td>
+                <td className="px-4 py-2.5 font-mono text-xs">{row.name || "—"}</td>
+                <td className="px-4 py-2.5">{row.error || statusLabel(row.stage)}</td>
+                <td className="px-4 py-2.5 text-muted-foreground">
+                  {/* A dash, not "nobody": the column is a list of addresses,
+                      and an empty one reads better as absent than as a word
+                      competing with the addresses above and below it. */}
+                  {row.recipients.length ? row.recipients.join(", ") : "—"}
+                </td>
+                <td className="px-2 py-2.5 text-right">
+                  <button
+                    type="button"
+                    aria-label={`Remove the scan from ${formatWhen(row.at)}`}
+                    disabled={busyAt === row.at}
+                    onClick={() => void drop(row.at)}
+                    className="text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:ring-ring/50 grid size-8 place-items-center rounded-lg outline-none focus-visible:ring-3 disabled:opacity-50"
+                  >
+                    <XIcon className="size-4" />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -535,7 +554,7 @@ function viewSubtitle(view: View): string {
     case "recipients":
       return "Addresses that get the PDF."
     case "jobs":
-      return "Scans this desk has run."
+      return "Scans you have run."
     case "print":
       return "Drop a PDF and the Xerox prints it. One job at a time, in order."
     default: {
