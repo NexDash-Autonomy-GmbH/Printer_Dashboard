@@ -29,7 +29,7 @@
     // Neither is a credential: the team domain is public and the AUD tag
     // only identifies which Access app a token must have been issued for.
     "ACCESS_TEAM_DOMAIN": "nexos-nexdash.cloudflareaccess.com",
-    "ACCESS_AUD": "69e1daf4d35b5772413cb4e82c64d03cef820e91d0d3f5aee700edb7e0129ba0",
+    "ACCESS_AUD": "50a8efcb8eca1b87b092065e89103caf51e0cd8252ee285d7db7123343e5f335",
     // Recipient lists are per signed-in person. The one list that existed
     // before namespacing is handed to this address on their first read.
     "LEGACY_RECIPIENTS_OWNER": "alwin@nexdash.com"
