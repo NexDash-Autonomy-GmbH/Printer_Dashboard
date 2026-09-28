@@ -225,6 +225,9 @@ void postError(String resultUrl, const char *encoded) {
 
 static const char *HR_DEVICE_STATUS = "1.3.6.1.2.1.25.3.5.1.1.1";  // 3 idle, 4 printing, 5 warmup
 static uint32_t lastTelemetry = 0;
+// The feeder state the Worker last accepted, so a change can be sent at once
+// instead of waiting out the 60 s telemetry interval.
+static String lastAdf;
 
 // True while bytes are being relayed to port 9100 or the printer is being
 // waited on. Nothing optional runs in that window.
@@ -299,9 +302,9 @@ void scannerStatus(const String &printer, String &state, String &adf) {
  * does for hours at a stretch, eSCL's ScannerStatus is asked instead: 4 KB,
  * and it at least proves the printer is on the network.
  */
-void postTelemetry(const String &printer, bool force = false) {
+bool postTelemetry(const String &printer, bool force = false) {
   if (!force && millis() - lastTelemetry < 60000 && lastTelemetry != 0) {
-    return;
+    return false;
   }
   lastTelemetry = millis();
 
@@ -347,9 +350,34 @@ void postTelemetry(const String &printer, bool force = false) {
   // into a bin.
   if (posted != 200) {
     Serial.printf("telemetry REJECTED %d %s\n", posted, unused.c_str());
+  } else if (adf.length()) {
+    lastAdf = adf;
   }
   Serial.printf("telemetry %s  adf=%s  heap=%u\n", online ? status : "offline",
                 adf.length() ? adf.c_str() : "-", (unsigned)ESP.getFreeHeap());
+  return true;
+}
+
+/**
+ * Sends a report now if the feeder has changed since the last one.
+ *
+ * Loading paper used to take up to 80 s to reach the dashboard: telemetry
+ * goes at most once a minute, and only between 20 s long-polls. The Scan
+ * screen keeps Feeder disabled while it thinks the tray is empty, so that
+ * whole wait was spent unable to start the scan. This asks the printer
+ * directly each idle pass, a LAN request the Worker never sees, and reports
+ * only on a change, so the Worker gets no extra traffic.
+ */
+void reportIfFeederChanged(const String &printer) {
+  if (printInFlight) {
+    return;
+  }
+  String state, adf;
+  scannerStatus(printer, state, adf);
+  if (adf.length() && adf != lastAdf) {
+    Serial.printf("feeder %s -> %s\n", lastAdf.length() ? lastAdf.c_str() : "-", adf.c_str());
+    postTelemetry(printer, true);
+  }
 }
 
 // ---- print queue -----------------------------------------------------------
@@ -720,9 +748,15 @@ void loop() {
     if (printer.length() == 0) {
       printer = "192.168.68.52";
     }
-    // No scan waiting. A print job, if any, takes this pass; telemetry otherwise.
-    if (!checkPrintQueue(printer)) {
-      postTelemetry(printer);
+    // Refresh was pressed and a page is waiting on this report, so it goes
+    // before anything else. Then a print job, if any, takes this pass;
+    // otherwise telemetry, or at least a look at the feeder.
+    const bool asked = jsonField(body, "report") == "1";
+    if (asked) {
+      postTelemetry(printer, true);
+    }
+    if (!checkPrintQueue(printer) && !asked && !postTelemetry(printer)) {
+      reportIfFeederChanged(printer);
     }
     return;
   }

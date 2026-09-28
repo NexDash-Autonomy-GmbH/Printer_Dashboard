@@ -52,7 +52,8 @@ export type RecipientsActions = {
   add: () => Promise<void>
   remove: (email: string) => Promise<void>
   setSource: (source: ScanSource) => void
-  refresh: () => Promise<void>
+  /* fresh: ask the bridge for a new reading first. The Refresh button's job. */
+  refresh: (options?: { fresh?: boolean }) => Promise<void>
   scan: () => Promise<void>
 }
 
@@ -119,9 +120,9 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     supplies: null,
   })
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async ({ fresh = false }: { fresh?: boolean } = {}) => {
     try {
-      const data = await fetchState()
+      const data = await fetchState({ fresh })
       setState((current) => {
         const next = { ...current, ...applyPrinter(data) }
         const empty = (next.adf || "").toLowerCase().includes("empty")

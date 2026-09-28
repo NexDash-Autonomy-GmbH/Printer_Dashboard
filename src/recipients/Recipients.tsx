@@ -576,6 +576,18 @@ const NAV_VIEWS: View[] = ["overview", "scan", "recipients", "jobs", "print"]
 export function RecipientsDashboard() {
   const { actions } = useRecipients()
   const [view, setView] = useState<View>("overview")
+  const [checking, setChecking] = useState(false)
+
+  // Takes a few seconds: the bridge is asked for a new reading and this
+  // waits for it, so the button says so rather than looking dead.
+  const refreshNow = async () => {
+    setChecking(true)
+    try {
+      await actions.refresh({ fresh: true })
+    } finally {
+      setChecking(false)
+    }
+  }
   const title = viewTitle(view)
   const subtitle = viewSubtitle(view)
 
@@ -618,9 +630,10 @@ export function RecipientsDashboard() {
                   <AnimatedButton
                     type="button"
                     variant="outline"
-                    onClick={() => void actions.refresh()}
+                    disabled={checking}
+                    onClick={() => void refreshNow()}
                   >
-                    Refresh
+                    {checking ? "Checking…" : "Refresh"}
                   </AnimatedButton>
                   <Separator orientation="vertical" className="my-1 self-stretch" />
                   <SwitchMode

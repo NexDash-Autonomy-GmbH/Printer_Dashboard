@@ -101,12 +101,17 @@ async function readJson<T>(res: Response): Promise<T> {
 
 export const SIGNED_OUT = "Your sign-in has expired. Reload the page to sign in again."
 
-export async function fetchState(): Promise<PrinterState> {
+/**
+ * `fresh` asks the bridge to report first, so the answer is what the printer
+ * says now rather than up to a minute ago. The Worker waits up to 8 s for
+ * that report, hence the longer timeout.
+ */
+export async function fetchState({ fresh = false }: { fresh?: boolean } = {}): Promise<PrinterState> {
   try {
     // Do not chase a redirect: Access answers an expired session with a 302 to
     // its own login host, and following that cross-origin fails CORS, which
     // used to surface as "Printer unreachable" — the wrong diagnosis entirely.
-    const res = await request("/api/state", { redirect: "manual" }, 4000)
+    const res = await request(fresh ? "/api/state?fresh=1" : "/api/state", { redirect: "manual" }, fresh ? 12000 : 4000)
     if (res.type === "opaqueredirect" || res.status === 0) {
       throw new Error(SIGNED_OUT)
     }
