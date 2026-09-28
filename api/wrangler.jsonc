@@ -28,7 +28,7 @@
     "CORS_ORIGINS": "https://printer-dashboard.pages.dev",
     // Neither is a credential: the team domain is public and the AUD tag
     // only identifies which Access app a token must have been issued for.
-    "ACCESS_TEAM_DOMAIN": "nexdash.cloudflareaccess.com",
+    "ACCESS_TEAM_DOMAIN": "nexos-nexdash.cloudflareaccess.com",
     "ACCESS_AUD": "69e1daf4d35b5772413cb4e82c64d03cef820e91d0d3f5aee700edb7e0129ba0",
     // Recipient lists are per signed-in person. The one list that existed
     // before namespacing is handed to this address on their first read.
