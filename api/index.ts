@@ -225,6 +225,10 @@ export class PrinterApi extends DurableObject<Env> {
   private active: Job | null = null;
   private lastSeen = 0;
   private pollWaiters: Array<() => void> = [];
+  /* Refresh was pressed: the next idle poll tells the bridge to report now. */
+  private reportWanted = false;
+  /* Pages waiting on that report, resolved by the next telemetry to arrive. */
+  private telemetryWaiters: Array<() => void> = [];
 
   async fetch(request: Request): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -317,6 +321,14 @@ export class PrinterApi extends DurableObject<Env> {
   }
 
   private async handleState(request: Request, actor: string): Promise<Response> {
+    // ?fresh=1 is the Refresh button. Without it, the page could only ever
+    // read what the bridge last sent, which is up to a minute old, so loading
+    // the feeder and pressing Refresh changed nothing. With it, the bridge is
+    // asked to report now and this answers once that report lands.
+    const fresh = new URL(request.url).searchParams.get("fresh") === "1";
+    if (fresh && this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000) {
+      await this.awaitReport(8_000);
+    }
     const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
     const online = this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000;
     return json(request, this.env, 200, {
@@ -839,7 +851,7 @@ export class PrinterApi extends DurableObject<Env> {
         owner: orphan.owner,
       });
     }
-    if (!this.queued) {
+    if (!this.queued && !this.reportWanted) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, 20_000);
         this.pollWaiters.push(() => {
@@ -850,7 +862,10 @@ export class PrinterApi extends DurableObject<Env> {
     }
     this.lastSeen = Date.now();
     if (!this.queued) {
-      return json(request, this.env, 200, { job: "" });
+      // A string, like duplex: the bridge's jsonField only reads quoted values.
+      const report = this.reportWanted;
+      this.reportWanted = false;
+      return json(request, this.env, 200, report ? { job: "", report: "1" } : { job: "" });
     }
     this.active = this.queued;
     this.active.phase = "scanning";
@@ -965,7 +980,31 @@ export class PrinterApi extends DurableObject<Env> {
       checked_at: Number(body.checked_at) || Date.now() / 1000,
     };
     await this.ctx.storage.put("supplies", supplies);
+    for (const done of this.telemetryWaiters.splice(0)) {
+      done();
+    }
     return json(request, this.env, 200, { ok: true });
+  }
+
+  /**
+   * Ask the bridge for a report and wait for it, or give up after `ms`.
+   *
+   * Any report counts, not only the one asked for: a print in progress
+   * reports every few seconds by itself, and a scan that is running cannot
+   * answer until it finishes, so the timeout is what bounds the wait then.
+   */
+  private awaitReport(ms: number): Promise<void> {
+    this.reportWanted = true;
+    return new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        this.telemetryWaiters = this.telemetryWaiters.filter((w) => w !== done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      this.telemetryWaiters.push(done);
+      this.wakePoll();
+    });
   }
 
   private wakePoll(): void {
