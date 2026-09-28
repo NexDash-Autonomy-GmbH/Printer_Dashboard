@@ -289,6 +289,10 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handleProgress(request);
       case "/bridge/telemetry":
         return this.handleTelemetry(request);
+      case "/bridge/export":
+        return this.handleExport(request);
+      case "/bridge/import":
+        return this.handleImport(request);
       default:
         return json(request, this.env, 404, { ok: false, error: "not found" });
     }
@@ -1002,6 +1006,56 @@ export class PrinterApi extends DurableObject<Env> {
       this.telemetryWaiters.push(done);
       this.wakePoll();
     });
+  }
+
+  // ---- account move ------------------------------------------------------
+  //
+  // One-off, for moving printer-api from Alwin's Cloudflare account to
+  // Parth's, where nexdash.com lives. Durable Object storage does not move
+  // with a Worker, so without this everyone's saved recipients would be lost.
+  // The old Worker exports, the new one imports once, then both routes go.
+  // Bridge token only: the dump holds every recipient address.
+
+  private async handleExport(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    const entries = Object.fromEntries(await this.ctx.storage.list());
+    return json(request, this.env, 200, { ok: true, entries });
+  }
+
+  private async handleImport(request: Request): Promise<Response> {
+    if (!bearerOk(request, this.env.BRIDGE_TOKEN || "")) {
+      return new Response("forbidden", { status: 403 });
+    }
+    if (request.method !== "POST") {
+      return json(request, this.env, 405, { ok: false, error: "method not allowed" });
+    }
+    // Once, into an empty store. "supplies" is allowed to exist already: the
+    // bridge's telemetry writes it, and it is replaced by the next report.
+    const existing = [...(await this.ctx.storage.list()).keys()].filter((k) => k !== "supplies");
+    if (existing.length) {
+      return json(request, this.env, 409, { ok: false, error: `store is not empty: ${existing.join(", ")}` });
+    }
+    const body = (await request.json().catch(() => null)) as { entries?: Record<string, unknown> } | null;
+    if (!body?.entries || typeof body.entries !== "object") {
+      return json(request, this.env, 400, { ok: false, error: "expected {entries}" });
+    }
+    const entries: Record<string, unknown> = { ...body.entries };
+    delete entries.supplies;
+    // A queued job's PDF is in the old account's KV and does not come along,
+    // so only finished jobs, which are history, make the trip.
+    if (Array.isArray(entries.printJobs)) {
+      entries.printJobs = (entries.printJobs as PrintJob[]).filter(
+        (j) => j.status === "done" || j.status === "failed"
+      );
+    }
+    // put() takes at most 128 keys per call.
+    const all = Object.entries(entries);
+    for (let i = 0; i < all.length; i += 100) {
+      await this.ctx.storage.put(Object.fromEntries(all.slice(i, i + 100)));
+    }
+    return json(request, this.env, 200, { ok: true, imported: Object.keys(entries) });
   }
 
   private wakePoll(): void {
