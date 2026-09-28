@@ -50,6 +50,6 @@
     "typescript": "~6",
     "typescript-eslint": "^8",
     "vite": "^8",
-    "wrangler": "^4.127.1"
+    "wrangler": "^4.142.0"
   }
 }
