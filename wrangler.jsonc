@@ -9,6 +9,9 @@
   // API, verified, and then silently cleared by the next CI deploy — which is
   // what made /api/* answer 503 "printer worker binding missing".
   "name": "printer-dashboard",
+  // Deployed to the same account as printer-api (Parth@nexdash.com's): a
+  // service binding only reaches a Worker in its own account. Pages configs
+  // refuse "account_id", so CLOUDFLARE_ACCOUNT_ID picks the account instead.
   "pages_build_output_dir": "dist",
   "compatibility_date": "2026-09-01",
   "services": [
