@@ -50,10 +50,10 @@ export type RecipientsState = {
   } | null
   supplies: Supplies | null
   /**
-   * "Check pages first": the next scan waits for its pages to be looked at
-   * before it is mailed. Off by default, so pressing Scan still sends in one
-   * click. Remembered in this browser, since whoever feeds landscape pages
-   * tends to do it every time.
+   * "Check pages first": the next scan waits as a draft, previewed page by
+   * page, until it is sent. On by default, so every scan can be turned before
+   * it goes out. "Send right away" is remembered in this browser for anyone
+   * who would rather have the old one click.
    */
   checkFirst: boolean
   /**
@@ -126,9 +126,9 @@ const CHECK_FIRST_KEY = "scan-check-pages"
 // Losing the preference there is fine; losing the page is not.
 function readCheckFirst(): boolean {
   try {
-    return localStorage.getItem(CHECK_FIRST_KEY) === "1"
+    return localStorage.getItem(CHECK_FIRST_KEY) !== "0"
   } catch {
-    return false
+    return true
   }
 }
 
