@@ -1,7 +1,8 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { accessConfig, verifyAccess } from "./access";
-import { sendScan, serveScan } from "./mail";
+import { mailScan, serveScan } from "./mail";
+import { parseTurns, rotatePages, unchanged } from "./pages";
 
 export type Env = {
   PRINTER_API: DurableObjectNamespace<PrinterApi>;
@@ -23,7 +24,9 @@ export type Env = {
   ALLOW_ANONYMOUS_DEV?: string;
   /* Who owned the single shared recipient list before it was namespaced. */
   LEGACY_RECIPIENTS_OWNER: string;
-  /* Uploaded PDFs, keyed print:<job id>. Deleted once the job finishes. */
+  /* Uploaded PDFs, keyed print:<job id>. Deleted once the job finishes.
+     Also scans waiting for their owner to check the pages, keyed
+     review:<id>, deleted once sent or discarded. */
   PRINT_FILES: KVNamespace;
 };
 
@@ -36,6 +39,9 @@ type Job = {
   recipients: string[];
   /* Who started it, for the same reason: the scan log is per person. */
   owner: string;
+  /* "Check pages first" was chosen: hold the PDF for its owner instead of
+     mailing it on arrival. Captured at queue time like the recipients. */
+  review: boolean;
   startedAt: number;
   /* Where the job has got to. The Worker can only see two of these by
      itself -- queued, and claimed -- because the front door buffers request
@@ -58,6 +64,8 @@ type ScanOutcome = {
   error?: string;
   files?: string[];
   recipients?: string[];
+  /* The held scan's id, when the outcome is that it waits for review. */
+  review?: string;
 };
 
 type PrintStatus = "queued" | "printing" | "done" | "failed";
@@ -83,6 +91,12 @@ const MAX_SCAN_BYTES = 20 * 1024 * 1024;
 const PRINT_FILE_TTL_S = 24 * 60 * 60; // safety net if a delete is ever missed
 const PRINT_STALE_MS = 15 * 60 * 1000; // relay plus the printer finishing; longer than that, the bridge is gone
 const PRINT_HISTORY = 20;
+/* How long a scan waits for its pages to be checked. A day, like print
+   uploads: long enough to come back to after a meeting or overnight. */
+const REVIEW_TTL_S = 24 * 60 * 60;
+/* A send takes seconds. A claim older than this belongs to a request that
+   never came back, and must not block sending that scan forever. */
+const REVIEW_SEND_STALE_MS = 2 * 60 * 1000;
 
 type ScanLog = {
   at: number;
@@ -93,6 +107,13 @@ type ScanLog = {
   /* Who ran it. Missing on rows written before the log went per person;
      nobody signed in sees those, since there is no telling whose they are. */
   owner?: string;
+  /* Set while the PDF waits in KV as review:<id> for its owner to send it.
+     This row is what lets a closed tab come back to it: Scan jobs offers
+     Review for as long as it is set. Cleared once sent or discarded. */
+  review?: string;
+  /* When KV lets go of that PDF, so the row can say it expired rather than
+     offer a Review that finds nothing. */
+  expires?: number;
 };
 
 /**
@@ -190,6 +211,14 @@ function withoutSender(list: string[], sender: string): string[] {
   return out;
 }
 
+/** A held scan whose PDF KV no longer has. Recorded as unsent, not deleted. */
+function expire(row: ScanLog): void {
+  row.stage = "expired";
+  row.error = "Expired before it was sent";
+  delete row.review;
+  delete row.expires;
+}
+
 /** Anything that changes state or physically drives the printer. */
 
 /**
@@ -230,6 +259,9 @@ export class PrinterApi extends DurableObject<Env> {
   private reportWanted = false;
   /* Pages waiting on that report, resolved by the next telemetry to arrive. */
   private telemetryWaiters: Array<() => void> = [];
+  /* Held scans being sent right now, by id, with when the send began. A
+     double-click, or a second tab, must not mail one scan twice. */
+  private reviewSends = new Map<string, number>();
 
   async fetch(request: Request): Promise<Response> {
     if (request.method === "OPTIONS") {
@@ -275,6 +307,8 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handleEmails(request, actor);
       case "/api/scan":
         return this.handleScan(request, actor);
+      case "/api/review":
+        return this.handleReview(request, actor);
       case "/api/print":
         return this.handlePrint(request, actor);
       case "/bridge/print/next":
@@ -353,16 +387,19 @@ export class PrinterApi extends DurableObject<Env> {
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
       bridge_online: online,
-      scans: this.ownScans(await this.scanLog(), actor),
+      scans: this.ownScans(await this.liveScanLog(), actor),
       supplies: await this.supplies(),
       // So a reopened tab can show a scan that is still running. The scan
       // itself never depended on the page being open; only the view of it did.
+      // `review` so that view can say the scan will wait rather than promise
+      // an email that is not going to leave on its own.
       scan_in_progress: this.active
         ? {
             stage: this.active.phase,
             since: this.active.startedAt,
             source: this.active.source,
             bytes: this.active.bytes ?? null,
+            review: this.active.review,
           }
         : this.queued
           ? {
@@ -370,6 +407,7 @@ export class PrinterApi extends DurableObject<Env> {
               since: this.queued.startedAt,
               source: this.queued.source,
               bytes: null,
+              review: this.queued.review,
             }
           : null,
     });
@@ -383,6 +421,29 @@ export class PrinterApi extends DurableObject<Env> {
     return (await this.ctx.storage.get<ScanLog[]>("scans")) ?? [];
   }
 
+  /**
+   * The log with any held scan past its KV lifetime marked expired first.
+   *
+   * KV drops the PDF on its own and tells nobody, so without this the row
+   * would go on offering a Review that finds nothing. Expired is recorded,
+   * not deleted: the scan was never sent, and the list should say so.
+   */
+  private async liveScanLog(): Promise<ScanLog[]> {
+    const log = await this.scanLog();
+    const now = Date.now();
+    let changed = false;
+    for (const row of log) {
+      if (row.review && (row.expires ?? 0) <= now) {
+        expire(row);
+        changed = true;
+      }
+    }
+    if (changed) {
+      await this.ctx.storage.put("scans", log);
+    }
+    return log;
+  }
+
   /** What one person sees of the log. No actor is local dev: everything. */
   private ownScans(log: ScanLog[], actor: string): ScanLog[] {
     return log.filter((row) => !actor || row.owner === actor);
@@ -391,8 +452,15 @@ export class PrinterApi extends DurableObject<Env> {
   private async recordScan(entry: ScanLog): Promise<void> {
     // The last 20 per person, so one busy colleague cannot push everyone
     // else's scans out of a log they can no longer see.
+    //
+    // A scan still waiting for review is kept regardless and does not count
+    // toward the 20. Its row is the only way back to it, so trimming the row
+    // would strand an unsent scan in KV with nothing pointing at it.
     const kept = new Map<string, number>();
     const next = [entry, ...(await this.scanLog())].filter((row) => {
+      if (row.review) {
+        return true;
+      }
       const n = kept.get(row.owner ?? "") ?? 0;
       kept.set(row.owner ?? "", n + 1);
       return n < 20;
@@ -438,27 +506,42 @@ export class PrinterApi extends DurableObject<Env> {
       const log = await this.scanLog();
       const mine = (row: ScanLog) => !actor || row.owner === actor;
       // Clear all: every row of yours. Nothing to clear is not an error.
+      // Scans still waiting for review stay, the way print's clear-all leaves
+      // queued jobs: tidying the history must not throw away a scan nobody
+      // has sent yet.
       if (params.get("all") === "1") {
-        const next = log.filter((row) => !mine(row));
+        const next = log.filter((row) => !mine(row) || row.review);
         await this.ctx.storage.put("scans", next);
-        return json(request, this.env, 200, { ok: true, scans: [] });
+        return json(request, this.env, 200, { ok: true, scans: this.ownScans(next, actor) });
       }
       const at = Number(params.get("at") || "0");
       if (!Number.isFinite(at) || at <= 0) {
         return json(request, this.env, 400, { ok: false, error: "which scan?" });
       }
-      const next = log.filter((row) => !(row.at === at && mine(row)));
-      if (next.length === log.length) {
+      const gone = log.filter((row) => row.at === at && mine(row));
+      const next = log.filter((row) => !gone.includes(row));
+      if (gone.length === 0) {
         return json(request, this.env, 404, { ok: false, error: "no such scan" });
       }
+      if (gone.some((row) => row.review && this.sendClaimed(row.review))) {
+        return json(request, this.env, 409, { ok: false, error: "that scan is being sent right now" });
+      }
+      // One row asked for by name is a deliberate discard, so a held PDF goes
+      // with it rather than sitting in KV until it expires.
+      await Promise.all(
+        gone.filter((row) => row.review).map((row) => this.env.PRINT_FILES.delete(`review:${row.review}`))
+      );
       await this.ctx.storage.put("scans", next);
       return json(request, this.env, 200, { ok: true, scans: this.ownScans(next, actor) });
     }
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
-    const body = ((await request.json().catch(() => ({}))) || {}) as { source?: string };
+    const body = ((await request.json().catch(() => ({}))) || {}) as { source?: string; review?: boolean };
     const source = body.source || "platen";
+    // Only an explicit true holds the scan. Anything else, including a page
+    // that predates review, keeps the old behaviour: mailed on arrival.
+    const review = body.review === true;
     const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     const recipients = withoutSender(await this.emails(actor), from);
     if (this.queued || this.active) {
@@ -517,6 +600,7 @@ export class PrinterApi extends DurableObject<Env> {
         source,
         recipients,
         owner: actor,
+        review,
         startedAt,
         phase: "waiting",
         resolve: (value) => {
@@ -551,19 +635,17 @@ export class PrinterApi extends DurableObject<Env> {
       await this.recordScan({ at: Date.now(), name, stage: "saved", recipients, owner });
       return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
+    if (job.review) {
+      const held = await this.holdForReview(name, recipients, owner, result.pdf);
+      if (held) {
+        return held;
+      }
+      // KV would not take it. Mailing it as scanned is the lesser failure:
+      // sideways pages in an inbox beat a scan that went nowhere, and the
+      // Scan screen promises that a scan is never lost to a closed tab.
+    }
     try {
-      await sendScan(
-        this.env,
-        {
-          fromEmail: this.env.MAIL_FROM_EMAIL || "",
-          fromName: this.env.MAIL_FROM_NAME || "NexDash",
-          linkBase: this.env.SCAN_LINK_BASE || "",
-        },
-        recipients,
-        `Xerox scan ${name}`,
-        result.pdf,
-        name
-      );
+      await mailScan(this.env, recipients, name, result.pdf);
     } catch (error) {
       const message = error instanceof Error ? error.message : "mail failed";
       await this.recordScan({ at: Date.now(), name, stage: "mail_failed", recipients, error: message, owner });
@@ -571,6 +653,196 @@ export class PrinterApi extends DurableObject<Env> {
     }
     await this.recordScan({ at: Date.now(), name, stage: "sent", recipients, owner });
     return { ok: true, stage: "sent", scanned: true, emailed: true, files: [name], recipients };
+  }
+
+  // ---- review -------------------------------------------------------------
+  //
+  // A scan started with "Check pages first" is not mailed when it arrives.
+  // finishScan parks the PDF in KV as review:<id> and logs a row carrying
+  // that id. Its owner fetches the PDF to preview it, then sends it, turned
+  // or exactly as scanned, or discards it. None of this needs the tab that
+  // started the scan: any tab of the owner's picks it up from Scan jobs
+  // until it expires.
+  //
+  // Private like the rest of the scan log. Someone else's held scan is a 404,
+  // not a 403: it is not yours to know of.
+
+  /** Parks a finished scan for its owner. null when KV would not take it. */
+  private async holdForReview(
+    name: string,
+    recipients: string[],
+    owner: string,
+    pdf: Uint8Array
+  ): Promise<ScanOutcome | null> {
+    const id = crypto.randomUUID();
+    try {
+      await this.env.PRINT_FILES.put(`review:${id}`, pdf, { expirationTtl: REVIEW_TTL_S });
+    } catch {
+      return null;
+    }
+    const at = Date.now();
+    await this.recordScan({
+      at,
+      name,
+      stage: "awaiting_review",
+      recipients,
+      owner,
+      review: id,
+      expires: at + REVIEW_TTL_S * 1000,
+    });
+    return { ok: true, stage: "awaiting_review", scanned: true, emailed: false, files: [name], recipients, review: id };
+  }
+
+  /** The caller's scan waiting under this id, or null. Someone else's is null too. */
+  private async heldScan(id: string, actor: string): Promise<ScanLog | null> {
+    if (!id) {
+      return null;
+    }
+    const log = await this.liveScanLog();
+    return log.find((row) => row.review === id && (!actor || row.owner === actor)) ?? null;
+  }
+
+  /**
+   * Rewrites a held scan's row. Re-reads the log rather than reusing a copy:
+   * a send takes seconds, and other scans may have been logged meanwhile.
+   */
+  private async settleReview(id: string, change: (row: ScanLog) => void): Promise<ScanLog[]> {
+    const log = await this.scanLog();
+    const row = log.find((item) => item.review === id);
+    if (row) {
+      change(row);
+      await this.ctx.storage.put("scans", log);
+    }
+    return log;
+  }
+
+  private sendClaimed(id: string): boolean {
+    const since = this.reviewSends.get(id);
+    return since !== undefined && Date.now() - since < REVIEW_SEND_STALE_MS;
+  }
+
+  private async handleReview(request: Request, actor: string): Promise<Response> {
+    if (request.method === "GET" || request.method === "DELETE") {
+      const id = new URL(request.url).searchParams.get("id") || "";
+      const row = await this.heldScan(id, actor);
+      if (!row) {
+        return json(request, this.env, 404, { ok: false, error: "no scan of yours is waiting under that id" });
+      }
+      if (request.method === "GET") {
+        const pdf = await this.env.PRINT_FILES.get(`review:${id}`, "stream");
+        if (!pdf) {
+          await this.settleReview(id, expire);
+          return json(request, this.env, 410, { ok: false, error: "that scan has expired" });
+        }
+        const headers = corsHeaders(request, this.env);
+        headers.set("Content-Type", "application/pdf");
+        headers.set("Cache-Control", "no-store");
+        return new Response(pdf, { status: 200, headers });
+      }
+      if (this.sendClaimed(id)) {
+        return json(request, this.env, 409, { ok: false, error: "that scan is being sent right now" });
+      }
+      await this.env.PRINT_FILES.delete(`review:${id}`);
+      const log = await this.settleReview(id, (item) => {
+        item.stage = "discarded";
+        delete item.error;
+        delete item.review;
+        delete item.expires;
+      });
+      return json(request, this.env, 200, { ok: true, scans: this.ownScans(log, actor) });
+    }
+    if (request.method !== "POST") {
+      await discardBody(request);
+      return json(request, this.env, 405, { ok: false, error: "method not allowed" });
+    }
+
+    const body = (await request.json().catch(() => null)) as { id?: unknown; rotate?: unknown } | null;
+    const id = typeof body?.id === "string" ? body.id : "";
+    const turns = parseTurns(body?.rotate);
+    if (!turns) {
+      return json(request, this.env, 400, { ok: false, error: "rotate is one angle per page, in steps of 90" });
+    }
+    const row = await this.heldScan(id, actor);
+    if (!row) {
+      return json(request, this.env, 404, { ok: false, error: "no scan of yours is waiting under that id" });
+    }
+    if (this.sendClaimed(id)) {
+      return json(request, this.env, 409, { ok: false, error: "that scan is already being sent" });
+    }
+    this.reviewSends.set(id, Date.now());
+    try {
+      return await this.sendHeld(request, actor, id, row, turns);
+    } finally {
+      this.reviewSends.delete(id);
+    }
+  }
+
+  private async sendHeld(
+    request: Request,
+    actor: string,
+    id: string,
+    row: ScanLog,
+    turns: number[]
+  ): Promise<Response> {
+    const held = await this.env.PRINT_FILES.get(`review:${id}`, "arrayBuffer");
+    if (!held) {
+      await this.settleReview(id, expire);
+      return json(request, this.env, 410, { ok: false, error: "that scan has expired" });
+    }
+    let pdf: Uint8Array = new Uint8Array(held);
+    // Nothing turned means the exact bytes the scanner produced go out: no
+    // parse and no rewrite, so the unchanged path cannot be broken by the
+    // rotating one.
+    if (!unchanged(turns)) {
+      try {
+        pdf = await rotatePages(pdf, turns);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unreadable PDF";
+        return json(request, this.env, 422, {
+          ok: false,
+          error: `Could not turn the pages (${message}). It can still be sent as scanned.`,
+        });
+      }
+    }
+    try {
+      await mailScan(this.env, row.recipients, row.name, pdf);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "mail failed";
+      // Still held, so the same scan can be sent again once mail works
+      // instead of being rescanned.
+      const log = await this.settleReview(id, (item) => {
+        item.stage = "mail_failed";
+        item.error = message;
+      });
+      return json(request, this.env, 502, {
+        ok: false,
+        stage: "mail_failed",
+        scanned: true,
+        emailed: false,
+        error: message,
+        files: [row.name],
+        scans: this.ownScans(log, actor),
+      });
+    }
+    // Mail first, then let go of the copy. A request cut off between the two
+    // leaves the scan still waiting for review, which is recoverable. The
+    // other order could lose it.
+    const log = await this.settleReview(id, (item) => {
+      item.stage = "sent";
+      delete item.error;
+      delete item.review;
+      delete item.expires;
+    });
+    await this.env.PRINT_FILES.delete(`review:${id}`);
+    return json(request, this.env, 200, {
+      ok: true,
+      stage: "sent",
+      scanned: true,
+      emailed: true,
+      files: [row.name],
+      recipients: row.recipients,
+      scans: this.ownScans(log, actor),
+    });
   }
 
   // ---- print queue --------------------------------------------------------

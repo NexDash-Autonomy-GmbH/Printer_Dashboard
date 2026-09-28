@@ -141,11 +141,17 @@ Toner bar fills may use SNMP-reported colors from the printer. Those are data, n
 |------|----------|-------|
 | Color | 150ms | Hover, focus ring |
 | Sidebar | shadcn width transition | Collapse |
+| Page turn | 220ms ease-in-out | Scan review thumbnails, per page and All pages |
+| Segmented pill | spring 420/34 | `Segmented`: After scanning, All pages |
+| Review dialog | 200ms fade + zoom | `AlertDialogContent size="lg"` |
+
+Named tokens live in `src/lib/motion.ts`.
 
 ### Rules
 
 - No decorative motion. Honor `prefers-reduced-motion` on the spinner.
 - No page-load choreography.
+- Reduced motion keeps opacity and colour, and drops travel and scale: a page snaps to its new angle and fades in, the pill jumps, dialogs fade without zooming.
 
 ## 7. Depth & Surface
 

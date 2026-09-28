@@ -41,11 +41,19 @@ const STAGES = [
   { key: "email", label: "Email", detail: "Emailing it", pct: 92 },
 ] as const
 
+/* A scan held for its pages to be checked ends by being set aside, not
+   mailed. Same place on the bar, so only the words change. */
+const HELD_STAGES = [
+  STAGES[0],
+  STAGES[1],
+  { key: "email", label: "Check", detail: "Setting it aside to be checked", pct: 92 },
+] as const
+
 /** Which visible stage a reported phase belongs to. */
-function stageOf(phase: string | undefined) {
-  if (phase === "waiting") return STAGES[0]
-  if (phase === "scanning" || phase === "uploading") return STAGES[1]
-  if (phase === "emailing") return STAGES[2]
+function stageOf(phase: string | undefined, stages: typeof STAGES | typeof HELD_STAGES) {
+  if (phase === "waiting") return stages[0]
+  if (phase === "scanning" || phase === "uploading") return stages[1]
+  if (phase === "emailing") return stages[2]
   return undefined
 }
 
@@ -69,7 +77,13 @@ export function ScanProgressDialog() {
   // for a restored view meant the person who pressed Scan watched a bar that
   // never moved, while someone who merely reopened the tab got the live one.
   // The context re-reads state every few seconds, so this advances for both.
-  const stage = stageOf(remote?.stage)
+  //
+  // Whether it will be held comes from the server once it has reported the
+  // scan. Before that, a scan this tab started was held if the choice on
+  // this tab said so, and it cannot have changed since: this covers it.
+  const held = remote ? remote.review : mine && state.checkFirst
+  const stages = held ? HELD_STAGES : STAGES
+  const stage = stageOf(remote?.stage, stages)
   const pct = stage?.pct ?? 10
   const heading = stage?.detail ?? "Talking to the Xerox…"
 
@@ -108,7 +122,7 @@ export function ScanProgressDialog() {
         </div>
 
         <ol className="text-muted-foreground/90 mt-3 flex justify-between text-[11px]">
-          {STAGES.map((st) => {
+          {stages.map((st) => {
             const done = pct > st.pct
             const here = stage?.key === st.key
             return (
@@ -130,7 +144,9 @@ export function ScanProgressDialog() {
         ) : null}
 
         <p className="text-muted-foreground/80 mt-4 text-xs">
-          Safe to close this page — the scan and the email finish without it.
+          {held
+            ? "Safe to close this page. Nothing is emailed until the pages have been checked, from Scan jobs."
+            : "Safe to close this page — the scan and the email finish without it."}
         </p>
 
         {/* Only the restored view can be dismissed. A scan this tab started is
