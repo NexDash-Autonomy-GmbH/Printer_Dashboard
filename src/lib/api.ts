@@ -273,14 +273,29 @@ export async function cancelPrint(id: string): Promise<PrintQueue> {
   return printJson(res)
 }
 
-/** Clears one entry from the scan log, keyed on its start time. */
-export async function removeScan(at: number): Promise<void> {
-  const res = await request(`/api/scan?at=${encodeURIComponent(String(at))}`, { method: "DELETE" })
+/** Clears every finished job of yours from the history. Queued ones stay. */
+export async function clearPrintHistory(): Promise<PrintQueue> {
+  const res = await request("/api/print?all=1", { method: "DELETE" })
+  return printJson(res)
+}
+
+async function deleteScans(query: string, fallback: string): Promise<void> {
+  const res = await request(`/api/scan?${query}`, { method: "DELETE" })
   if (res.status === 401 || res.status === 403) {
     throw new Error(SIGNED_OUT)
   }
   const body = await readJson<{ ok?: boolean; error?: string }>(res)
   if (!res.ok || body.ok === false) {
-    throw new Error(body.error || "Could not remove that scan")
+    throw new Error(body.error || fallback)
   }
+}
+
+/** Clears one entry from the scan log, keyed on its start time. */
+export function removeScan(at: number): Promise<void> {
+  return deleteScans(`at=${encodeURIComponent(String(at))}`, "Could not remove that scan")
+}
+
+/** Clears every scan of yours from the log. */
+export function clearScans(): Promise<void> {
+  return deleteScans("all=1", "Could not clear the scans")
 }
