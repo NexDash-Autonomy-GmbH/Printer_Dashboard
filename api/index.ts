@@ -1,16 +1,15 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { accessConfig, verifyAccess } from "./access";
-import { sendSmtp } from "./smtp";
+import { sendMail } from "./mail";
 
 export type Env = {
   PRINTER_API: DurableObjectNamespace<PrinterApi>;
-  SMTP_HOST: string;
-  SMTP_PORT: string;
-  SMTP_USER: string;
-  SMTP_PASSWORD: string;
-  SMTP_FROM_EMAIL: string;
-  SMTP_FROM_NAME: string;
+  /* Cloudflare Email Sending on the account that owns nexdash.com. Secrets. */
+  EMAIL_ACCOUNT_ID: string;
+  EMAIL_API_TOKEN: string;
+  MAIL_FROM_EMAIL: string;
+  MAIL_FROM_NAME: string;
   BRIDGE_TOKEN: string;
   PRINTER_HOST: string;
   CORS_ORIGINS: string;
@@ -329,7 +328,7 @@ export class PrinterApi extends DurableObject<Env> {
     if (fresh && this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000) {
       await this.awaitReport(8_000);
     }
-    const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
+    const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     const online = this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000;
     return json(request, this.env, 200, {
       printer_host: this.env.PRINTER_HOST || "192.168.68.52",
@@ -341,9 +340,9 @@ export class PrinterApi extends DurableObject<Env> {
       // when nothing has been heard yet.
       adf: (await this.supplies())?.adf || "unknown",
       scan_dir: "",
-      from_email: this.env.SMTP_FROM_EMAIL || null,
-      from_name: this.env.SMTP_FROM_NAME || null,
-      ses_region: this.env.SMTP_HOST || "smtp.gmail.com",
+      from_email: this.env.MAIL_FROM_EMAIL || null,
+      from_name: this.env.MAIL_FROM_NAME || null,
+      ses_region: "Cloudflare Email Sending",
       emails: withoutSender(await this.emails(actor), from),
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
@@ -397,7 +396,7 @@ export class PrinterApi extends DurableObject<Env> {
 
   private async handleEmails(request: Request, actor: string): Promise<Response> {
     const current = await this.emails(actor);
-    const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
+    const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     if (request.method === "POST") {
       const body = (await request.json().catch(() => ({}))) as { email?: string };
       const email = (body.email || "").trim().toLowerCase();
@@ -454,7 +453,7 @@ export class PrinterApi extends DurableObject<Env> {
     }
     const body = ((await request.json().catch(() => ({}))) || {}) as { source?: string };
     const source = body.source || "platen";
-    const from = (this.env.SMTP_FROM_EMAIL || "").toLowerCase();
+    const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     const recipients = withoutSender(await this.emails(actor), from);
     if (this.queued || this.active) {
       return json(request, this.env, 200, {
@@ -547,14 +546,12 @@ export class PrinterApi extends DurableObject<Env> {
       return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
     try {
-      await sendSmtp(
+      await sendMail(
         {
-          host: this.env.SMTP_HOST || "smtp.gmail.com",
-          port: Number(this.env.SMTP_PORT || "587"),
-          user: this.env.SMTP_USER || "",
-          password: this.env.SMTP_PASSWORD || "",
-          fromEmail: this.env.SMTP_FROM_EMAIL || "",
-          fromName: this.env.SMTP_FROM_NAME || this.env.SMTP_FROM_EMAIL || "",
+          accountId: this.env.EMAIL_ACCOUNT_ID || "",
+          apiToken: this.env.EMAIL_API_TOKEN || "",
+          fromEmail: this.env.MAIL_FROM_EMAIL || "",
+          fromName: this.env.MAIL_FROM_NAME || "NexDash OS",
         },
         recipients,
         `Xerox scan ${name}`,

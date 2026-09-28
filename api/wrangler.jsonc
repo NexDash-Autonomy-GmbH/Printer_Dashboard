@@ -14,8 +14,12 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    "SMTP_HOST": "smtp.gmail.com",
-    "SMTP_PORT": "587",
+    // Scan mail goes out from the same no-reply address as NexOS. The account
+    // ID and token for Email Sending are secrets (EMAIL_ACCOUNT_ID,
+    // EMAIL_API_TOKEN): nexdash.com is onboarded in another Cloudflare
+    // account, so this Worker cannot use a send_email binding for it.
+    "MAIL_FROM_EMAIL": "noreply@nexdash.com",
+    "MAIL_FROM_NAME": "NexDash OS",
     "PRINTER_HOST": "192.168.68.52",
     "CORS_ORIGINS": "https://printer-dashboard.pages.dev",
     // Neither is a credential: the team domain is public and the AUD tag

@@ -105,8 +105,10 @@ Browser (anywhere) → https://printer-dashboard.pages.dev
                   → https://printer-api.nexdash.workers.dev
 ESP8266 on NexDash Wi-Fi → Xerox 192.168.68.52
 ESP8266 → Worker API (HTTPS long-poll + PDF POST)
-Worker → Gmail SMTP as the Workspace sender
+Worker → Cloudflare Email Sending as noreply@nexdash.com ("NexDash OS")
 ```
+
+Scan mail from the Worker goes out through Cloudflare Email Sending's REST API, from the same no-reply address as NexOS. `nexdash.com` is onboarded in Parth@nexdash.com's Cloudflare account, not the one this Worker runs in, so it needs two Worker secrets from that account: `EMAIL_ACCOUNT_ID` and `EMAIL_API_TOKEN` (an API token with Email Sending: Edit). Neither SMTP nor a `send_email` binding works from here: Workers cannot open sockets to Cloudflare's own mail servers, and the binding only sends from domains in the Worker's own account. The Gmail App Password setup under Mail above is for the local `xerox_scan.py` fallback only.
 
 ngrok (`https://cb21-89-245-192-80.ngrok-free.app`) is a tunnel to this Mac's port 8765. It dies when the lid closes. Do not use it as prod.
 
