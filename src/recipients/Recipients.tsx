@@ -247,9 +247,9 @@ function ScanSourceToggle() {
 }
 
 /**
- * Whether the scan is mailed the moment it arrives, as it always was, or
- * held so its pages can be turned first. Sending right away is the default,
- * so for anyone who never touches this, Scan is still one click.
+ * Whether the scan waits as a draft so its pages can be previewed and turned
+ * before it is sent, the default, or is mailed the moment it arrives, as it
+ * used to be.
  */
 function AfterScanChoice() {
   const { state, actions } = useRecipients()
