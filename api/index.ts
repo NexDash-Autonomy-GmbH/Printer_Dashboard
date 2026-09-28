@@ -556,7 +556,7 @@ export class PrinterApi extends DurableObject<Env> {
         this.env,
         {
           fromEmail: this.env.MAIL_FROM_EMAIL || "",
-          fromName: this.env.MAIL_FROM_NAME || "NexDash OS",
+          fromName: this.env.MAIL_FROM_NAME || "NexDash",
           linkBase: this.env.SCAN_LINK_BASE || "",
         },
         recipients,

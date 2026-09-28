@@ -18,9 +18,9 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    // Scan mail goes out from the same no-reply address and name as NexOS.
+    // Scan mail goes out from the same no-reply address as NexOS.
     "MAIL_FROM_EMAIL": "noreply@nexdash.com",
-    "MAIL_FROM_NAME": "NexDash OS",
+    "MAIL_FROM_NAME": "NexDash",
     // Where download links for scans too big to attach point. A nexdash.com
     // name, not workers.dev, so links survive any future move.
     "SCAN_LINK_BASE": "https://printer-api.nexdash.com",
