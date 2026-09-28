@@ -529,7 +529,7 @@ function viewTitle(view: View): string {
 function viewSubtitle(view: View): string {
   switch (view) {
     case "overview":
-      return "Xerox B305 at the office"
+      return ""
     case "scan":
       return "Scan from the glass or the feeder."
     case "recipients":
@@ -584,9 +584,11 @@ export function RecipientsDashboard() {
                   <h1 className="text-foreground text-xl font-bold tracking-tight text-balance sm:text-3xl lg:text-4xl">
                     {title}
                   </h1>
-                  <p className="text-muted-foreground mt-1 text-xs font-medium sm:text-sm">
-                    {subtitle}
-                  </p>
+                  {subtitle ? (
+                    <p className="text-muted-foreground mt-1 text-xs font-medium sm:text-sm">
+                      {subtitle}
+                    </p>
+                  ) : null}
                 </div>
               </div>
               {/* One right-hand cluster. As three siblings under justify-between,

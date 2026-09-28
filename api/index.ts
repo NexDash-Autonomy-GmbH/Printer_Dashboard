@@ -33,6 +33,8 @@ type Job = {
      list belongs to the person who started it, and completion now runs on
      the bridge's request where there is no signed-in actor to look up. */
   recipients: string[];
+  /* Who started it, for the same reason: the scan log is per person. */
+  owner: string;
   startedAt: number;
   /* Where the job has got to. The Worker can only see two of these by
      itself -- queued, and claimed -- because the front door buffers request
@@ -87,6 +89,9 @@ type ScanLog = {
   stage: string;
   recipients: string[];
   error?: string;
+  /* Who ran it. Missing on rows written before the log went per person;
+     nobody signed in sees those, since there is no telling whose they are. */
+  owner?: string;
 };
 
 /**
@@ -331,7 +336,7 @@ export class PrinterApi extends DurableObject<Env> {
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
       bridge_online: online,
-      scans: await this.scanLog(),
+      scans: this.ownScans(await this.scanLog(), actor),
       supplies: await this.supplies(),
       // So a reopened tab can show a scan that is still running. The scan
       // itself never depended on the page being open; only the view of it did.
@@ -361,8 +366,20 @@ export class PrinterApi extends DurableObject<Env> {
     return (await this.ctx.storage.get<ScanLog[]>("scans")) ?? [];
   }
 
+  /** What one person sees of the log. No actor is local dev: everything. */
+  private ownScans(log: ScanLog[], actor: string): ScanLog[] {
+    return log.filter((row) => !actor || row.owner === actor);
+  }
+
   private async recordScan(entry: ScanLog): Promise<void> {
-    const next = [entry, ...(await this.scanLog())].slice(0, 20);
+    // The last 20 per person, so one busy colleague cannot push everyone
+    // else's scans out of a log they can no longer see.
+    const kept = new Map<string, number>();
+    const next = [entry, ...(await this.scanLog())].filter((row) => {
+      const n = kept.get(row.owner ?? "") ?? 0;
+      kept.set(row.owner ?? "", n + 1);
+      return n < 20;
+    });
     await this.ctx.storage.put("scans", next);
   }
 
@@ -394,23 +411,24 @@ export class PrinterApi extends DurableObject<Env> {
 
   private async handleScan(request: Request, actor: string): Promise<Response> {
     // Clearing one entry out of the scan log. Keyed on `at`, the scan's start
-    // in milliseconds, because a ScanLog has no id and never has: it is a
-    // desk log, so the timestamp is the handle the dashboard already uses.
+    // in milliseconds, because a ScanLog has no id and never has: the
+    // timestamp is the handle the dashboard already uses.
     //
-    // The log is shared rather than per-user, unlike recipients. Everyone at
-    // this desk sees the same scans, so everyone can tidy them.
+    // The log is per person, like recipients, so only your own rows can be
+    // cleared. Someone else's is a 404, not a 403: it is not yours to know of.
     if (request.method === "DELETE") {
       const at = Number(new URL(request.url).searchParams.get("at") || "0");
       if (!Number.isFinite(at) || at <= 0) {
         return json(request, this.env, 400, { ok: false, error: "which scan?" });
       }
       const log = await this.scanLog();
-      const next = log.filter((row) => row.at !== at);
+      const mine = (row: ScanLog) => !actor || row.owner === actor;
+      const next = log.filter((row) => !(row.at === at && mine(row)));
       if (next.length === log.length) {
         return json(request, this.env, 404, { ok: false, error: "no such scan" });
       }
       await this.ctx.storage.put("scans", next);
-      return json(request, this.env, 200, { ok: true, scans: next });
+      return json(request, this.env, 200, { ok: true, scans: this.ownScans(next, actor) });
     }
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
@@ -466,6 +484,7 @@ export class PrinterApi extends DurableObject<Env> {
           stage: "scan_failed",
           recipients: job?.recipients ?? recipients,
           error: failed.error,
+          owner: actor,
         });
         resolve(failed);
       }, 180_000);
@@ -473,6 +492,7 @@ export class PrinterApi extends DurableObject<Env> {
         id,
         source,
         recipients,
+        owner: actor,
         startedAt,
         phase: "waiting",
         resolve: (value) => {
@@ -495,15 +515,16 @@ export class PrinterApi extends DurableObject<Env> {
    */
   private async finishScan(job: Job, result: ScanResult): Promise<ScanOutcome> {
     const recipients = job.recipients;
+    const owner = job.owner;
     job.phase = "emailing";
     if (result.error || !result.pdf || result.pdf.byteLength === 0) {
       const error = result.error || "empty scan";
-      await this.recordScan({ at: Date.now(), name: "", stage: "scan_failed", recipients, error });
+      await this.recordScan({ at: Date.now(), name: "", stage: "scan_failed", recipients, error, owner });
       return { ok: false, stage: "scan_failed", scanned: false, emailed: false, error };
     }
     const name = `scan_${new Date().toISOString().replace(/[:.]/g, "-")}.pdf`;
     if (recipients.length === 0) {
-      await this.recordScan({ at: Date.now(), name, stage: "saved", recipients });
+      await this.recordScan({ at: Date.now(), name, stage: "saved", recipients, owner });
       return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
     try {
@@ -524,10 +545,10 @@ export class PrinterApi extends DurableObject<Env> {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : "mail failed";
-      await this.recordScan({ at: Date.now(), name, stage: "mail_failed", recipients, error: message });
+      await this.recordScan({ at: Date.now(), name, stage: "mail_failed", recipients, error: message, owner });
       return { ok: false, stage: "mail_failed", scanned: true, emailed: false, error: message, files: [name] };
     }
-    await this.recordScan({ at: Date.now(), name, stage: "sent", recipients });
+    await this.recordScan({ at: Date.now(), name, stage: "sent", recipients, owner });
     return { ok: true, stage: "sent", scanned: true, emailed: true, files: [name], recipients };
   }
 
@@ -536,19 +557,27 @@ export class PrinterApi extends DurableObject<Env> {
   // One queue for the whole desk, strictly ordered, one job printing at a
   // time. The Durable Object is a singleton so the lock is just "is anything
   // in the printing state". Everyone sees the queue — names included — so a
-  // person waiting knows who is ahead of them and why.
+  // person waiting knows who is ahead of them and why. History is private:
+  // once a job is done or failed, only its owner sees it.
 
   private async printJobs(): Promise<PrintJob[]> {
     return (await this.ctx.storage.get<PrintJob[]>("printJobs")) ?? [];
   }
 
   private async savePrintJobs(jobs: PrintJob[]): Promise<void> {
-    // Keep the live jobs and a short tail of finished ones for the history list.
+    // Keep the live jobs and a short tail of finished ones per person for the
+    // history list. Per person, because history is private: a shared tail
+    // would let one busy colleague push everyone else's history out.
     const live = jobs.filter((j) => j.status === "queued" || j.status === "printing");
+    const kept = new Map<string, number>();
     const done = jobs
       .filter((j) => j.status === "done" || j.status === "failed")
       .sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0))
-      .slice(0, PRINT_HISTORY);
+      .filter((j) => {
+        const n = kept.get(j.owner) ?? 0;
+        kept.set(j.owner, n + 1);
+        return n < PRINT_HISTORY;
+      });
     await this.ctx.storage.put("printJobs", [...live, ...done]);
   }
 
@@ -575,6 +604,7 @@ export class PrinterApi extends DurableObject<Env> {
       bridge_online: this.lastSeen > 0 && now - this.lastSeen < 45_000,
       printing: queue.find((j) => j.status === "printing")?.id ?? null,
       jobs: jobs
+        .filter((j) => j.status === "queued" || j.status === "printing" || !actor || j.owner === actor)
         .sort((a, b) => a.createdAt - b.createdAt)
         .map((j) => ({
           id: j.id,
@@ -787,6 +817,7 @@ export class PrinterApi extends DurableObject<Env> {
         stage: "scan_failed",
         recipients: orphan.recipients,
         error: "the office bridge restarted mid-scan",
+        owner: orphan.owner,
       });
     }
     if (!this.queued) {
