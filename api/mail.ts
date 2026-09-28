@@ -1,80 +1,107 @@
 /**
- * Scan mail, sent through Cloudflare Email Sending's REST API.
+ * Scan mail, from noreply@nexdash.com through Cloudflare Email Sending.
  *
- * Not the send_email binding: that only sends from domains onboarded in the
- * Worker's own account, and nexdash.com is onboarded in a different one
- * (Parth's), where NexOS sends from noreply@nexdash.com too. Not SMTP either:
- * smtp.mx.cloudflare.net is on Cloudflare's own IP ranges, and Workers cannot
- * open TCP sockets to those. So the account ID and a token scoped to Email
- * Sending on that account are what this needs.
+ * Email Sending caps a whole message at 5 MiB, attachments included, on every
+ * route: this binding, the REST API and SMTP alike. Gmail took 25 MB, and a
+ * colour page from this printer is ~415 KB, ~570 KB once base64'd into a
+ * message, so anything past about nine pages would simply fail. A scan that
+ * fits is attached as before; a bigger one is kept in SCAN_FILES for 30 days
+ * and the mail carries a link to it instead.
  */
+export type MailEnv = {
+  EMAIL: SendEmail;
+  SCAN_FILES: KVNamespace;
+};
+
 export type MailConfig = {
-  accountId: string;
-  apiToken: string;
   fromEmail: string;
   fromName: string;
+  /* Origin that serves /scans/<id>/<name>, with no trailing slash. */
+  linkBase: string;
 };
 
-type SendResult = {
-  delivered: string[];
-  queued: string[];
-  permanent_bounces: string[];
-  suppressed_recipients: string[];
-};
+/* Raw PDF bytes that still fit: 3.5 MB grows to ~4.8 MB as base64, which
+   leaves room under 5 MiB for the headers and the body. */
+export const ATTACH_MAX_BYTES = 3_500_000;
+export const LINK_TTL_S = 30 * 24 * 60 * 60;
 
-type ApiResponse = {
-  success: boolean;
-  errors?: Array<{ code: number; message: string }>;
-  result?: SendResult;
-};
-
-export async function sendMail(
+export async function sendScan(
+  env: MailEnv,
   cfg: MailConfig,
   to: string[],
   subject: string,
-  text: string,
   pdf: Uint8Array,
   filename: string
-): Promise<void> {
-  if (!cfg.accountId || !cfg.apiToken || !cfg.fromEmail) {
-    throw new Error("EMAIL_ACCOUNT_ID, EMAIL_API_TOKEN and MAIL_FROM_EMAIL must be set");
+): Promise<{ linked: boolean }> {
+  if (!cfg.fromEmail) {
+    throw new Error("MAIL_FROM_EMAIL must be set");
   }
-  const res = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cfg.accountId)}/email/sending/send`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${cfg.apiToken}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
+  const from = { email: cfg.fromEmail, name: cfg.fromName };
+  try {
+    if (pdf.byteLength <= ATTACH_MAX_BYTES) {
+      await env.EMAIL.send({
         to,
-        from: { address: cfg.fromEmail, name: cfg.fromName },
+        from,
         subject,
-        text,
-        attachments: [
-          { content: base64(pdf), filename, type: "application/pdf", disposition: "attachment" },
-        ],
-      }),
+        text: "Scan from the Xerox B305.\n",
+        attachments: [{ content: pdf, filename, type: "application/pdf", disposition: "attachment" }],
+      });
+      return { linked: false };
     }
-  );
-  const body = (await res.json().catch(() => null)) as ApiResponse | null;
-  if (!res.ok || !body?.success || !body.result) {
-    const reason = body?.errors?.map((e) => `${e.code} ${e.message}`).join("; ");
-    throw new Error(`Email Sending refused the mail (HTTP ${res.status})${reason ? `: ${reason}` : ""}`);
-  }
-  // A 200 can still leave recipients behind. Queued is fine, it is on its way;
-  // a bounce or a suppression means that person never gets the scan.
-  const lost = [...body.result.permanent_bounces, ...body.result.suppressed_recipients];
-  if (lost.length) {
-    throw new Error(`Not delivered to ${lost.join(", ")}`);
+    const id = crypto.randomUUID();
+    await env.SCAN_FILES.put(`scan:${id}`, pdf, {
+      expirationTtl: LINK_TTL_S,
+      metadata: { name: filename },
+    });
+    const link = `${cfg.linkBase}/scans/${id}/${encodeURIComponent(filename)}`;
+    const mb = (pdf.byteLength / 1_000_000).toFixed(1);
+    await env.EMAIL.send({
+      to,
+      from,
+      subject,
+      text:
+        `Scan from the Xerox B305.\n\n` +
+        `It is ${mb} MB, too large to attach, so it is here instead:\n${link}\n\n` +
+        `The link works for 30 days.\n`,
+    });
+    return { linked: true };
+  } catch (error) {
+    // The binding throws with a string code, E_SENDER_NOT_VERIFIED and the
+    // like. Keep it: it says what to fix, where the message alone may not.
+    const code = (error as { code?: string }).code;
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(code ? `${code}: ${message}` : message);
   }
 }
 
-// Chunked, because String.fromCharCode(...bytes) on a 20 MB scan overflows
-// the argument limit.
-function base64(bytes: Uint8Array): string {
-  let bin = "";
-  const chunk = 0x2000;
-  for (let i = 0; i < bytes.length; i += chunk) {
-    bin += String.fromCharCode(...bytes.subarray(i, i + chunk));
+/**
+ * GET /scans/<id>/<name>. No sign-in, on purpose: recipients outside NexDash
+ * have to open it. The id is a random UUID, so the link is the key, and the
+ * file is gone when its 30 days run out.
+ */
+export async function serveScan(env: MailEnv, pathname: string): Promise<Response> {
+  const id = pathname.split("/")[2] || "";
+  if (!/^[0-9a-f-]{36}$/.test(id)) {
+    return new Response("Not found\n", { status: 404 });
   }
-  return btoa(bin);
+  const { value, metadata } = await env.SCAN_FILES.getWithMetadata<{ name?: string }>(
+    `scan:${id}`,
+    "arrayBuffer"
+  );
+  if (!value) {
+    return new Response("This scan link has expired.\n", {
+      status: 404,
+      headers: { "Content-Type": "text/plain; charset=utf-8" },
+    });
+  }
+  const name = (metadata?.name || "scan.pdf").replace(/["\r\n]/g, "");
+  return new Response(value, {
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="${name}"`,
+      "Cache-Control": "private, no-store",
+      "Referrer-Policy": "no-referrer",
+      "X-Robots-Tag": "noindex",
+    },
+  });
 }

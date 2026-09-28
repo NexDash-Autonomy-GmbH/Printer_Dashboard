@@ -1,15 +1,17 @@
 import { DurableObject } from "cloudflare:workers";
 
 import { accessConfig, verifyAccess } from "./access";
-import { sendMail } from "./mail";
+import { sendScan, serveScan } from "./mail";
 
 export type Env = {
   PRINTER_API: DurableObjectNamespace<PrinterApi>;
-  /* Cloudflare Email Sending on the account that owns nexdash.com. Secrets. */
-  EMAIL_ACCOUNT_ID: string;
-  EMAIL_API_TOKEN: string;
+  /* Cloudflare Email Sending, locked to noreply@nexdash.com in wrangler.jsonc. */
+  EMAIL: SendEmail;
   MAIL_FROM_EMAIL: string;
   MAIL_FROM_NAME: string;
+  /* Scans too big to attach, and the origin their links point at. */
+  SCAN_FILES: KVNamespace;
+  SCAN_LINK_BASE: string;
   BRIDGE_TOKEN: string;
   PRINTER_HOST: string;
   CORS_ORIGINS: string;
@@ -550,16 +552,15 @@ export class PrinterApi extends DurableObject<Env> {
       return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
     try {
-      await sendMail(
+      await sendScan(
+        this.env,
         {
-          accountId: this.env.EMAIL_ACCOUNT_ID || "",
-          apiToken: this.env.EMAIL_API_TOKEN || "",
           fromEmail: this.env.MAIL_FROM_EMAIL || "",
           fromName: this.env.MAIL_FROM_NAME || "NexDash OS",
+          linkBase: this.env.SCAN_LINK_BASE || "",
         },
         recipients,
         `Xerox scan ${name}`,
-        "Scan from the Xerox B305.\n",
         result.pdf,
         name
       );
@@ -1072,6 +1073,11 @@ const MAX_BODY_BYTES = 26 * 1024 * 1024;
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    // Scan download links. Public and stateless, so they never touch the DO.
+    const { pathname } = new URL(request.url);
+    if (pathname.startsWith("/scans/") && (request.method === "GET" || request.method === "HEAD")) {
+      return serveScan(env, pathname);
+    }
     // Read the body here, before the Durable Object sees it. A stream handed
     // into the DO stays owned by this context, so when the DO answers early —
     // a 403 from the gate, a 405, a 413 — the unread stream dangles and workerd

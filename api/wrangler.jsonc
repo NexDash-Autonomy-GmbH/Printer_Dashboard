@@ -1,6 +1,10 @@
 {
   "$schema": "../node_modules/wrangler/config-schema.json",
   "name": "printer-api",
+  // Parth@nexdash.com's Account, where nexdash.com lives. Moved from Alwin's
+  // so scan mail can use the send_email binding for noreply@nexdash.com,
+  // which only sends from domains onboarded in the Worker's own account.
+  "account_id": "18b41dc63c29cf3652cfddec8278368f",
   "main": "index.ts",
   "compatibility_date": "2026-08-31",
   // The ESP8266 bridge polls this hostname directly and cannot do SSO, so it
@@ -14,12 +18,12 @@
     "head_sampling_rate": 1
   },
   "vars": {
-    // Scan mail goes out from the same no-reply address as NexOS. The account
-    // ID and token for Email Sending are secrets (EMAIL_ACCOUNT_ID,
-    // EMAIL_API_TOKEN): nexdash.com is onboarded in another Cloudflare
-    // account, so this Worker cannot use a send_email binding for it.
+    // Scan mail goes out from the same no-reply address and name as NexOS.
     "MAIL_FROM_EMAIL": "noreply@nexdash.com",
     "MAIL_FROM_NAME": "NexDash OS",
+    // Where download links for scans too big to attach point. A nexdash.com
+    // name, not workers.dev, so links survive any future move.
+    "SCAN_LINK_BASE": "https://printer-api.nexdash.com",
     "PRINTER_HOST": "192.168.68.52",
     "CORS_ORIGINS": "https://printer-dashboard.pages.dev",
     // Neither is a credential: the team domain is public and the AUD tag
@@ -35,7 +39,27 @@
   "kv_namespaces": [
     {
       "binding": "PRINT_FILES",
-      "id": "5c857ee3181548c6ab9bfc252126913b"
+      "id": "424b12ad075740d6a2408de6f94f9bfb"
+    },
+    // Scans over the 5 MiB mail limit, served from /scans/<id>/ for 30 days.
+    {
+      "binding": "SCAN_FILES",
+      "id": "2bdea914d26a43bf9a5894cdb3d70798"
+    }
+  ],
+  // Locked to the one sender, so nothing else can be sent as nexdash.com.
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "allowed_sender_addresses": ["noreply@nexdash.com"]
+    }
+  ],
+  // The bridge and scan links use this. Everyone else reaches the Worker
+  // through the dashboard's service binding.
+  "routes": [
+    {
+      "pattern": "printer-api.nexdash.com",
+      "custom_domain": true
     }
   ],
   "durable_objects": {
