@@ -37,6 +37,16 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# One deploy at a time, newest last. Two merges a few seconds apart used to
+# deploy side by side, and whichever finished second won: #65's older build
+# landed six seconds after #66's and took the new Scan card off production.
+# Queued, the later merge always deploys after the earlier one. Not
+# cancel-in-progress, which could stop a run between the Worker and the
+# dashboard and leave the two halves on different commits.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
