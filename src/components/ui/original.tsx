@@ -12,6 +12,8 @@ export interface MacOSSidebarProps {
   items: MacOSSidebarItem[]
   defaultOpen?: boolean
   initialSelectedIndex?: number
+  /** Set it to drive the selection from outside, as a link elsewhere on the page must. */
+  selectedIndex?: number
   children?: ReactNode
   className?: string
   onSelect?: (index: number) => void
@@ -21,12 +23,14 @@ export function MacOSSidebar({
   items,
   defaultOpen = true,
   initialSelectedIndex = 0,
+  selectedIndex: controlledIndex,
   children,
   className = "",
   onSelect,
 }: MacOSSidebarProps) {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null)
-  const [selectedIndex, setSelectedIndex] = useState<number>(initialSelectedIndex)
+  const [ownIndex, setSelectedIndex] = useState<number>(initialSelectedIndex)
+  const selectedIndex = controlledIndex ?? ownIndex
   const [isOpen, setIsOpen] = useState<boolean>(defaultOpen)
   const reduce = useReducedMotion()
 

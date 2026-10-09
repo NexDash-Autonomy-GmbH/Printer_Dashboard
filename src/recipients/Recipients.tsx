@@ -35,6 +35,7 @@ import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { PrintView } from "@/print/PrintView"
+import { Envelope } from "@/scan/Envelope"
 import { picked, useRecipients } from "@/recipients/context"
 
 type View = "overview" | "scan" | "recipients" | "jobs" | "print"
@@ -486,9 +487,8 @@ function OverviewView() {
   )
 }
 
-function ScanView() {
+function ScanView({ onEditRecipients }: { onEditRecipients: () => void }) {
   const { state } = useRecipients()
-  const to = picked(state.emails, state.leftOut)
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-4">
       <div>
@@ -496,29 +496,8 @@ function ScanView() {
         <p className="mt-1 text-sm text-muted-foreground">
           {state.source === "adf" ? "Stack in the feeder, one PDF." : "One page from the glass."}
         </p>
-        <p className="mt-2 text-sm text-muted-foreground">
-          From{" "}
-          <span className="font-medium text-foreground" translate="no">
-            {state.fromEmail || "—"}
-          </span>
-        </p>
-        {/* Read-only here. Who gets scans is switched on Recipients, and
-            saying it next to From means nobody scans without seeing it. */}
-        {state.loaded ? (
-          <p className="mt-1 text-sm text-muted-foreground">
-            To{" "}
-            {to.length ? (
-              <span className="font-medium text-foreground" translate="no">
-                {to.join(", ")}
-              </span>
-            ) : state.emails.length ? (
-              "nobody. Switch someone on under Recipients."
-            ) : (
-              "nobody yet. Add addresses under Recipients."
-            )}
-          </p>
-        ) : null}
       </div>
+      <Envelope onEdit={onEditRecipients} />
       {state.loadError ? (
         <Alert>
           <AlertTitle>{state.loadError}</AlertTitle>
@@ -719,6 +698,7 @@ export function RecipientsDashboard() {
     <div className="min-h-dvh bg-background p-3">
       <MacOSSidebar
         items={NAV_ITEMS}
+        selectedIndex={NAV_VIEWS.indexOf(view)}
         className="min-h-[calc(100dvh-1.5rem)] w-full max-w-none rounded-2xl shadow-none"
         onSelect={(index) => {
           const next = NAV_VIEWS[index]
@@ -778,7 +758,7 @@ export function RecipientsDashboard() {
           </header>
           <div className="flex min-h-0 flex-1 flex-col">
             {view === "overview" ? <OverviewView /> : null}
-            {view === "scan" ? <ScanView /> : null}
+            {view === "scan" ? <ScanView onEditRecipients={() => setView("recipients")} /> : null}
             {view === "recipients" ? <RecipientsView /> : null}
             {view === "jobs" ? <JobsView /> : null}
             {view === "print" ? <PrintView /> : null}
