@@ -30,8 +30,6 @@ export type PrinterState = {
     since: number
     source: string
     bytes?: number | null
-    /** It will wait for its pages to be checked rather than be mailed. */
-    review?: boolean
   } | null
   bridge_online?: boolean
   scans?: ScanLog[]
@@ -212,20 +210,18 @@ export async function savePick(leftOut: string[]): Promise<string[]> {
 }
 
 /**
- * review: hold the PDF for its pages to be checked instead of mailing it on arrival.
- * to: which of the saved recipients get it. The Worker refuses anyone else.
+ * Starts a scan. The Worker holds it for its pages to be checked; nothing is
+ * mailed until the review sends it. `to` is which of the saved recipients
+ * the review opens with. The Worker refuses anyone else.
  */
-export async function runScan(
-  source: "auto" | "platen" | "adf",
-  { review = false, to }: { review?: boolean; to: string[] }
-): Promise<ScanResult> {
+export async function runScan(source: "auto" | "platen" | "adf", { to }: { to: string[] }): Promise<ScanResult> {
   try {
     const res = await request(
       "/api/scan",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, review, to }),
+        body: JSON.stringify({ source, to }),
       },
       180_000
     )

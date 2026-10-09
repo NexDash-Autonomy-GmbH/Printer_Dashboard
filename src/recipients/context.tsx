@@ -55,17 +55,8 @@ export type RecipientsState = {
     stage: "waiting" | "scanning" | "uploading" | "emailing"
     since: number
     bytes: number | null
-    /** It will wait for its pages to be checked instead of being mailed. */
-    review: boolean
   } | null
   supplies: Supplies | null
-  /**
-   * "Check pages first": the next scan waits as a draft, previewed page by
-   * page, until it is sent. On by default, so every scan can be turned before
-   * it goes out. "Send right away" is remembered in this browser for anyone
-   * who would rather have the old one click.
-   */
-  checkFirst: boolean
   /**
    * The held scan the review dialog shows. `open` goes false on close while
    * the id stays, so the dialog keeps its pages on screen as it fades out.
@@ -83,7 +74,6 @@ export type RecipientsActions = {
   /* fresh: ask the bridge for a new reading first. The Refresh button's job. */
   refresh: (options?: { fresh?: boolean }) => Promise<void>
   scan: () => Promise<void>
-  setCheckFirst: (value: boolean) => void
   openReview: (id: string) => void
   closeReview: () => void
   /* Both throw with the reason on failure, for the dialog to show in place. */
@@ -131,30 +121,9 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
             stage: data.scan_in_progress.stage,
             since: data.scan_in_progress.since,
             bytes: data.scan_in_progress.bytes ?? null,
-            review: Boolean(data.scan_in_progress.review),
           }
         : null,
     supplies: data.supplies || null,
-  }
-}
-
-const CHECK_FIRST_KEY = "scan-check-pages"
-
-// Storage can throw outright in a private window or with site data blocked.
-// Losing the preference there is fine; losing the page is not.
-function readCheckFirst(): boolean {
-  try {
-    return localStorage.getItem(CHECK_FIRST_KEY) !== "0"
-  } catch {
-    return true
-  }
-}
-
-function writeCheckFirst(value: boolean): void {
-  try {
-    localStorage.setItem(CHECK_FIRST_KEY, value ? "1" : "0")
-  } catch {
-    // Not remembered, which only costs choosing it again next time.
   }
 }
 
@@ -181,7 +150,6 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     scans: [],
     remoteScan: null,
     supplies: null,
-    checkFirst: readCheckFirst(),
     review: null,
   })
 
@@ -308,9 +276,10 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   const scan = useCallback(async () => {
     const to = picked(state.emails, state.leftOut)
     // The Scan button is off in this case. This is for anything that gets
-    // here regardless, since an empty pick would mail nobody.
-    if (state.emails.length > 0 && to.length === 0) {
-      toast.error("Pick who gets the scan")
+    // here regardless: a scan for nobody would be checked and then have
+    // nowhere to go.
+    if (to.length === 0) {
+      toast.error(state.emails.length ? "Switch someone on under Recipients" : "Add a recipient first")
       return
     }
     if (state.source === "adf" && state.adf.toLowerCase().includes("empty")) {
@@ -328,7 +297,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
       jobStatus: "scanning",
       jobMessage: "Scanning…",
     }))
-    const result = await runScan(state.source, { review: state.checkFirst, to })
+    const result = await runScan(state.source, { to })
     await refresh()
     // Held for checking: straight into the review, with nothing to report
     // yet. The scan controls go back to rest, since the scan itself is done
@@ -372,7 +341,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }))
     toast.error(message)
     settleLater("failed")
-  }, [refresh, state.source, state.adf, state.checkFirst, state.emails, state.leftOut, settleLater])
+  }, [refresh, state.source, state.adf, state.emails, state.leftOut, settleLater])
 
   const closeReview = useCallback(() => {
     setState((current) =>
@@ -449,10 +418,6 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         }),
       refresh,
       scan,
-      setCheckFirst: (value) => {
-        writeCheckFirst(value)
-        setState((current) => ({ ...current, checkFirst: value }))
-      },
       openReview: (id) => setState((current) => ({ ...current, review: { id, open: true } })),
       closeReview,
       sendReview: sendHeld,

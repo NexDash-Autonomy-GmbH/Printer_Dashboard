@@ -39,9 +39,6 @@ type Job = {
   recipients: string[];
   /* Who started it, for the same reason: the scan log is per person. */
   owner: string;
-  /* "Check pages first" was chosen: hold the PDF for its owner instead of
-     mailing it on arrival. Captured at queue time like the recipients. */
-  review: boolean;
   startedAt: number;
   /* Where the job has got to. The Worker can only see two of these by
      itself -- queued, and claimed -- because the front door buffers request
@@ -465,15 +462,12 @@ export class PrinterApi extends DurableObject<Env> {
       supplies: await this.supplies(),
       // So a reopened tab can show a scan that is still running. The scan
       // itself never depended on the page being open; only the view of it did.
-      // `review` so that view can say the scan will wait rather than promise
-      // an email that is not going to leave on its own.
       scan_in_progress: this.active
         ? {
             stage: this.active.phase,
             since: this.active.startedAt,
             source: this.active.source,
             bytes: this.active.bytes ?? null,
-            review: this.active.review,
           }
         : this.queued
           ? {
@@ -481,7 +475,6 @@ export class PrinterApi extends DurableObject<Env> {
               since: this.queued.startedAt,
               source: this.queued.source,
               bytes: null,
-              review: this.queued.review,
             }
           : null,
     });
@@ -614,15 +607,14 @@ export class PrinterApi extends DurableObject<Env> {
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
+    // Every scan is held for its pages to be checked before it is mailed.
+    // There used to be a "Send right away" choice; a `review` field from a
+    // page that still offers it is ignored, so no tab can skip the check.
     const body = ((await request.json().catch(() => ({}))) || {}) as {
       source?: string;
-      review?: boolean;
       to?: unknown;
     };
     const source = body.source || "platen";
-    // Only an explicit true holds the scan. Anything else, including a page
-    // that predates review, keeps the old behaviour: mailed on arrival.
-    const review = body.review === true;
     const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     const saved = withoutSender(await this.emails(actor), from);
     // No `to` is a page from before recipients could be picked: everyone.
@@ -694,7 +686,6 @@ export class PrinterApi extends DurableObject<Env> {
         source,
         recipients,
         owner: actor,
-        review,
         startedAt,
         phase: "waiting",
         resolve: (value) => {
@@ -729,15 +720,13 @@ export class PrinterApi extends DurableObject<Env> {
       await this.recordScan({ at: Date.now(), name, stage: "saved", recipients, owner });
       return { ok: true, stage: "saved", scanned: true, emailed: false, files: [name] };
     }
-    if (job.review) {
-      const held = await this.holdForReview(name, recipients, owner, result.pdf);
-      if (held) {
-        return held;
-      }
-      // KV would not take it. Mailing it as scanned is the lesser failure:
-      // sideways pages in an inbox beat a scan that went nowhere, and the
-      // Scan screen promises that a scan is never lost to a closed tab.
+    const held = await this.holdForReview(name, recipients, owner, result.pdf);
+    if (held) {
+      return held;
     }
+    // KV would not take it. Mailing it as scanned is the lesser failure:
+    // sideways pages in an inbox beat a scan that went nowhere, and the
+    // Scan screen promises that a scan is never lost to a closed tab.
     try {
       await mailScan(this.env, recipients, name, result.pdf);
     } catch (error) {
@@ -751,10 +740,10 @@ export class PrinterApi extends DurableObject<Env> {
 
   // ---- review -------------------------------------------------------------
   //
-  // A scan started with "Check pages first" is not mailed when it arrives.
-  // finishScan parks the PDF in KV as review:<id> and logs a row carrying
-  // that id. Its owner fetches the PDF to preview it, then sends it, turned
-  // or exactly as scanned, or discards it. None of this needs the tab that
+  // No scan is mailed when it arrives. finishScan parks the PDF in KV as
+  // review:<id> and logs a row carrying that id. Its owner fetches the PDF
+  // to preview it, then sends it, turned or exactly as scanned, or discards
+  // it. None of this needs the tab that
   // started the scan: any tab of the owner's picks it up from Scan jobs
   // until it expires.
   //

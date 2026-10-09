@@ -30,7 +30,6 @@ import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
 import { ClearAllButton } from "@/components/ClearAllButton"
 import { Clock } from "@/components/Clock"
-import { Segmented } from "@/components/Segmented"
 import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -266,30 +265,6 @@ function ScanSourceToggle() {
 }
 
 /**
- * Whether the scan waits as a draft so its pages can be previewed and turned
- * before it is sent, the default, or is mailed the moment it arrives, as it
- * used to be.
- */
-function AfterScanChoice() {
-  const { state, actions } = useRecipients()
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-muted-foreground text-xs font-medium">After scanning</span>
-      <Segmented
-        label="After scanning"
-        value={state.checkFirst ? "check" : "send"}
-        onChange={(value) => actions.setCheckFirst(value === "check")}
-        disabled={state.jobStatus === "scanning"}
-        options={[
-          { value: "send", label: "Send right away" },
-          { value: "check", label: "Check pages first" },
-        ]}
-      />
-    </div>
-  )
-}
-
-/**
  * Scans of yours that are held and not yet sent, whichever tab started them.
  * A tab closed mid-review lands here, so a held scan is never out of sight
  * on the screen people come back to.
@@ -338,7 +313,9 @@ function RecipientsScan() {
   // banner, the progress dialog) stayed dark for the whole job.
   const feederEmpty =
     state.source === "adf" && adfView(state.scanner, state.adf).label === "ADF empty"
-  const nobody = state.emails.length > 0 && picked(state.emails, state.leftOut).length === 0
+  // Nobody switched on, or nobody added yet. Every scan waits to be checked
+  // and then sent, so one for nobody would have nowhere to go.
+  const nobody = state.loaded && picked(state.emails, state.leftOut).length === 0
   const label =
     state.jobStatus === "scanning"
       ? "Scanning…"
@@ -509,7 +486,6 @@ function ScanView({ onEditRecipients }: { onEditRecipients: () => void }) {
       <HeldScans />
       <JobBanner />
       <ScanSourceToggle />
-      <AfterScanChoice />
       <RecipientsScan />
     </div>
   )

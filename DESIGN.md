@@ -151,7 +151,7 @@ Toner bar fills may use SNMP-reported colors from the printer. Those are data, n
 | Color | 150ms | Hover, focus ring |
 | Sidebar | shadcn width transition | Collapse |
 | Page turn | 220ms ease-in-out | Scan review thumbnails, per page and All pages |
-| Segmented pill | spring 420/34 | `Segmented`: After scanning, All pages |
+| Segmented pill | spring 420/34 | `Segmented`: All pages |
 | Review dialog | 200ms fade + zoom | `AlertDialogContent size="lg"` |
 
 Named tokens live in `src/lib/motion.ts`.
