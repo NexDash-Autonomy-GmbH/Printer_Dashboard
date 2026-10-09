@@ -1,5 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
-import { createContext, use, useCallback, useEffect, useMemo, useState } from "react"
+import { createContext, use, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import {
@@ -8,6 +8,7 @@ import {
   fetchState,
   removeEmail,
   runScan,
+  savePick,
   sendReview,
   type PrinterState,
   type ScanLog,
@@ -21,10 +22,10 @@ export type JobStatus = "idle" | "scanning" | "sent" | "saved" | "failed"
 export type RecipientsState = {
   emails: string[]
   /**
-   * Saved recipients left off the next scan. Kept as who is left out rather
-   * than who is in, so an address added later is in by default, the way
-   * adding one always worked. Not remembered past a reload: a pick made for
-   * one scan should not quietly hold back the next day's.
+   * Saved recipients left off scans. Kept as who is left out rather than who
+   * is in, so an address added later is in by default, the way adding one
+   * always worked. The Worker keeps it per person, next to their list, so it
+   * holds across reloads, sign-outs and devices until they change it.
    */
   leftOut: string[]
   workspaceEmails: string[]
@@ -180,11 +181,24 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     review: null,
   })
 
+  // A toggle shows at once and saves behind it. A poll that set off before
+  // a save finished can carry the old pick, and taking it would flick the
+  // chip back. So pickSeq moves on every toggle and every finished save, and
+  // a poll's pick is only taken if pickSeq has not moved since it set off and
+  // no save is still out.
+  const pickSeq = useRef(0)
+  const pickSaving = useRef(0)
+
   const refresh = useCallback(async ({ fresh = false }: { fresh?: boolean } = {}) => {
+    const seq = pickSeq.current
     try {
       const data = await fetchState({ fresh })
+      const takePick = data.left_out !== undefined && seq === pickSeq.current && pickSaving.current === 0
       setState((current) => {
         const next = { ...current, ...applyPrinter(data) }
+        if (takePick) {
+          next.leftOut = data.left_out ?? []
+        }
         const empty = (next.adf || "").toLowerCase().includes("empty")
         if (empty && current.source === "adf") {
           next.source = "platen"
@@ -392,17 +406,34 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     [refresh],
   )
 
+  const pick = useCallback(
+    (to: string[]) => {
+      const leftOut = state.emails.filter((email) => !to.includes(email))
+      pickSeq.current += 1
+      pickSaving.current += 1
+      setState((current) => ({ ...current, leftOut }))
+      void savePick(leftOut)
+        .catch((error) => {
+          // The scan still goes to what is on screen, since it sends its own
+          // list. Only the remembering failed, and the next poll puts the
+          // saved pick back.
+          toast.error(error instanceof Error ? error.message : "Could not save who gets scans")
+        })
+        .finally(() => {
+          pickSaving.current -= 1
+          pickSeq.current += 1
+        })
+    },
+    [state.emails],
+  )
+
   const actions = useMemo<RecipientsActions>(
     () => ({
       setDraft: (value) =>
         setState((current) => ({ ...current, draft: value, invalid: false })),
       add,
       remove,
-      pick: (to) =>
-        setState((current) => ({
-          ...current,
-          leftOut: current.emails.filter((email) => !to.includes(email)),
-        })),
+      pick,
       setSource: (source) =>
         setState((current) => {
           const empty = current.adf.toLowerCase().includes("empty")
@@ -423,7 +454,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
       sendReview: sendHeld,
       discardReview: discardHeld,
     }),
-    [add, remove, refresh, scan, closeReview, sendHeld, discardHeld]
+    [add, remove, pick, refresh, scan, closeReview, sendHeld, discardHeld]
   )
 
   const value = useMemo<RecipientsContextValue>(

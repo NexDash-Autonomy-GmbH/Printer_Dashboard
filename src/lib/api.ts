@@ -20,6 +20,8 @@ export type PrinterState = {
   from_name?: string | null
   ses_region: string
   emails: string[]
+  /** Saved recipients this person leaves off their scans. Kept by the Worker until they change it. */
+  left_out?: string[]
   workspace_emails?: string[]
   web_ui: string
   /** A scan running right now, whoever started it and whatever tab they used. */
@@ -185,6 +187,28 @@ export async function removeEmail(email: string): Promise<string[]> {
     }
     throw new Error("Could not remove address", { cause: error })
   }
+}
+
+/** Saves who is left off scans from now on. Answers with what the Worker kept. */
+export async function savePick(leftOut: string[]): Promise<string[]> {
+  let res: Response
+  try {
+    res = await request("/api/pick", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ left_out: leftOut }),
+    })
+  } catch (error) {
+    throw new Error("Could not save who gets scans", { cause: error })
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error(SIGNED_OUT)
+  }
+  const data = await readJson<{ ok: boolean; left_out?: string[]; error?: string }>(res)
+  if (!res.ok || !data.ok) {
+    throw new Error(data.error || "Could not save who gets scans")
+  }
+  return data.left_out ?? []
 }
 
 /**

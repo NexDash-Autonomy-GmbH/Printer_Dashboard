@@ -333,6 +333,8 @@ export class PrinterApi extends DurableObject<Env> {
         return this.handleState(request, actor);
       case "/api/emails":
         return this.handleEmails(request, actor);
+      case "/api/pick":
+        return this.handlePick(request, actor);
       case "/api/scan":
         return this.handleScan(request, actor);
       case "/api/review":
@@ -387,6 +389,47 @@ export class PrinterApi extends DurableObject<Env> {
     return [];
   }
 
+  /**
+   * Who a person leaves off their scans, out of their saved recipients. Kept
+   * here with the list rather than in the browser, so it holds across
+   * sign-outs, reloads and devices until they change it. Stored as who is
+   * left out, so an address added later is in by default.
+   */
+  private leftOutKey(actor: string): string {
+    return actor ? `left_out:${actor}` : "left_out";
+  }
+
+  private async leftOut(actor: string): Promise<string[]> {
+    return (await this.ctx.storage.get<string[]>(this.leftOutKey(actor))) ?? [];
+  }
+
+  /** Drops `emails` from the left-out list. Adding or removing an address ends any pick on it. */
+  private async unleave(actor: string, emails: string[]): Promise<void> {
+    const current = await this.leftOut(actor);
+    const next = current.filter((email) => !emails.includes(email));
+    if (next.length !== current.length) {
+      await this.ctx.storage.put(this.leftOutKey(actor), next);
+    }
+  }
+
+  private async handlePick(request: Request, actor: string): Promise<Response> {
+    if (request.method !== "POST") {
+      await discardBody(request);
+      return json(request, this.env, 405, { ok: false, error: "method not allowed" });
+    }
+    const body = (await request.json().catch(() => null)) as { left_out?: unknown } | null;
+    const raw = body?.left_out;
+    if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) {
+      return json(request, this.env, 400, { ok: false, error: "left_out is a list of addresses" });
+    }
+    // A preference, not a send, so an address no longer saved is dropped
+    // rather than refused: a tab a few seconds behind should not fail.
+    const saved = await this.emails(actor);
+    const next = withoutSender(raw, "").filter((email) => saved.includes(email));
+    await this.ctx.storage.put(this.leftOutKey(actor), next);
+    return json(request, this.env, 200, { ok: true, left_out: next });
+  }
+
   private async handleState(request: Request, actor: string): Promise<Response> {
     // ?fresh=1 is the Refresh button. Without it, the page could only ever
     // read what the bridge last sent, which is up to a minute old, so loading
@@ -398,6 +441,8 @@ export class PrinterApi extends DurableObject<Env> {
     }
     const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
     const online = this.lastSeen > 0 && Date.now() - this.lastSeen < 45_000;
+    const emails = withoutSender(await this.emails(actor), from);
+    const leftOut = (await this.leftOut(actor)).filter((email) => emails.includes(email));
     return json(request, this.env, 200, {
       printer_host: this.env.PRINTER_HOST || "192.168.68.52",
       model: "Xerox B305 MFP",
@@ -411,7 +456,8 @@ export class PrinterApi extends DurableObject<Env> {
       from_email: this.env.MAIL_FROM_EMAIL || null,
       from_name: this.env.MAIL_FROM_NAME || null,
       ses_region: "Cloudflare Email Sending",
-      emails: withoutSender(await this.emails(actor), from),
+      emails,
+      left_out: leftOut,
       workspace_emails: withoutSender(WORKSPACE, from),
       web_ui: `http://${this.env.PRINTER_HOST || "192.168.68.52"}/`,
       bridge_online: online,
@@ -510,6 +556,8 @@ export class PrinterApi extends DurableObject<Env> {
       }
       const next = current.includes(email) ? current : [...current, email];
       await this.ctx.storage.put(this.emailsKey(actor), next);
+      // Added means wanted, even if it was left out before it was removed.
+      await this.unleave(actor, [email]);
       return json(request, this.env, 200, { ok: true, emails: next, added: next.length !== current.length });
     }
     if (request.method === "DELETE") {
@@ -517,6 +565,7 @@ export class PrinterApi extends DurableObject<Env> {
       const email = (url.searchParams.get("email") || "").trim().toLowerCase();
       const next = current.filter((item) => item !== email);
       await this.ctx.storage.put(this.emailsKey(actor), next);
+      await this.unleave(actor, [email]);
       return json(request, this.env, 200, { ok: true, emails: next });
     }
     return json(request, this.env, 405, { ok: false, error: "method not allowed" });
