@@ -33,7 +33,8 @@ import { Segmented } from "@/components/Segmented"
 import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
 import { PrintView } from "@/print/PrintView"
-import { useRecipients } from "@/recipients/context"
+import { picked, useRecipients } from "@/recipients/context"
+import { RecipientPicker } from "@/recipients/RecipientPicker"
 
 type View = "overview" | "scan" | "recipients" | "jobs" | "print"
 
@@ -311,6 +312,40 @@ function HeldScans() {
   )
 }
 
+/**
+ * Who this scan goes to, picked from the saved recipients. All of them until
+ * someone taps one out, which is what every scan did before there was a pick.
+ */
+function ScanRecipients() {
+  const { state, actions } = useRecipients()
+  if (!state.loaded) {
+    return null
+  }
+  const to = picked(state.emails, state.leftOut)
+  return (
+    <div className="flex flex-col gap-2">
+      <span className="text-muted-foreground text-xs font-medium">Send to</span>
+      {state.emails.length === 0 ? (
+        <p className="text-muted-foreground text-sm">
+          No recipients yet, so the scan will not be mailed. Add addresses under Recipients.
+        </p>
+      ) : (
+        <>
+          <RecipientPicker
+            label="Send to"
+            options={state.emails}
+            picked={to}
+            onChange={actions.pick}
+            disabled={state.jobStatus === "scanning"}
+          />
+          {to.length === 0 ? (
+            <p className="text-muted-foreground text-xs">Pick at least one, or the scan has nowhere to go.</p>
+          ) : null}
+        </>
+      )}
+    </div>
+  )
+}
 
 function RecipientsScan() {
   const { state, actions } = useRecipients()
@@ -320,6 +355,7 @@ function RecipientsScan() {
   // banner, the progress dialog) stayed dark for the whole job.
   const feederEmpty =
     state.source === "adf" && adfView(state.scanner, state.adf).label === "ADF empty"
+  const nobody = state.emails.length > 0 && picked(state.emails, state.leftOut).length === 0
   const label =
     state.jobStatus === "scanning"
       ? "Scanning…"
@@ -333,7 +369,7 @@ function RecipientsScan() {
     <AnimatedButton
       size="lg"
       className="w-full"
-      disabled={state.jobStatus === "scanning" || feederEmpty}
+      disabled={state.jobStatus === "scanning" || feederEmpty || nobody}
       onClick={() => {
         void (async () => {
           try {
@@ -496,6 +532,7 @@ function ScanView() {
       <JobBanner />
       <ScanSourceToggle />
       <AfterScanChoice />
+      <ScanRecipients />
       <RecipientsScan />
     </div>
   )
@@ -641,7 +678,7 @@ function viewSubtitle(view: View): string {
     case "scan":
       return "Scan from the glass or the feeder."
     case "recipients":
-      return "Addresses that get the PDF."
+      return "Addresses a scan can go to. Pick which ones on each scan."
     case "jobs":
       return "Scans you have run."
     case "print":

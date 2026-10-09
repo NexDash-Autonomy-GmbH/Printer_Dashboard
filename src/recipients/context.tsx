@@ -20,6 +20,13 @@ export type JobStatus = "idle" | "scanning" | "sent" | "saved" | "failed"
 
 export type RecipientsState = {
   emails: string[]
+  /**
+   * Saved recipients left off the next scan. Kept as who is left out rather
+   * than who is in, so an address added later is in by default, the way
+   * adding one always worked. Not remembered past a reload: a pick made for
+   * one scan should not quietly hold back the next day's.
+   */
+  leftOut: string[]
   workspaceEmails: string[]
   fromEmail: string
   printerHost: string
@@ -67,6 +74,8 @@ export type RecipientsActions = {
   setDraft: (value: string) => void
   add: () => Promise<void>
   remove: (email: string) => Promise<void>
+  /** Who the next scan goes to, out of the saved recipients. */
+  pick: (to: string[]) => void
   setSource: (source: ScanSource) => void
   /* fresh: ask the bridge for a new reading first. The Refresh button's job. */
   refresh: (options?: { fresh?: boolean }) => Promise<void>
@@ -75,7 +84,7 @@ export type RecipientsActions = {
   openReview: (id: string) => void
   closeReview: () => void
   /* Both throw with the reason on failure, for the dialog to show in place. */
-  sendReview: (id: string, rotate: number[]) => Promise<void>
+  sendReview: (id: string, rotate: number[], to: string[]) => Promise<void>
   discardReview: (id: string) => Promise<void>
 }
 
@@ -85,6 +94,11 @@ export type RecipientsContextValue = {
 }
 
 const RecipientsContext = createContext<RecipientsContextValue | null>(null)
+
+/** The saved recipients the next scan goes to. */
+export function picked(emails: string[], leftOut: string[]): string[] {
+  return emails.filter((email) => !leftOut.includes(email))
+}
 
 function applyPrinter(data: PrinterState): Partial<RecipientsState> {
   const fromEmail = (data.from_email || "").toLowerCase()
@@ -143,6 +157,7 @@ function writeCheckFirst(value: boolean): void {
 export function RecipientsProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<RecipientsState>({
     emails: [],
+    leftOut: [],
     workspaceEmails: [],
     fromEmail: "",
     printerHost: "",
@@ -222,9 +237,12 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }
     try {
       const emails = await addEmail(value)
+      const added = value.toLowerCase()
       setState((current) => ({
         ...current,
         emails,
+        // Added means wanted, even if it was left out before it was removed.
+        leftOut: current.leftOut.filter((email) => email !== added),
         draft: "",
         invalid: false,
       }))
@@ -239,7 +257,11 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   const remove = useCallback(async (email: string) => {
     try {
       const emails = await removeEmail(email)
-      setState((current) => ({ ...current, emails }))
+      setState((current) => ({
+        ...current,
+        emails,
+        leftOut: current.leftOut.filter((item) => item !== email),
+      }))
       toast.success(`Removed ${email}`)
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not remove address")
@@ -266,6 +288,13 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   }, [])
 
   const scan = useCallback(async () => {
+    const to = picked(state.emails, state.leftOut)
+    // The Scan button is off in this case. This is for anything that gets
+    // here regardless, since an empty pick would mail nobody.
+    if (state.emails.length > 0 && to.length === 0) {
+      toast.error("Pick who gets the scan")
+      return
+    }
     if (state.source === "adf" && state.adf.toLowerCase().includes("empty")) {
       toast.error("Feeder is empty")
       setState((current) => ({
@@ -281,7 +310,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
       jobStatus: "scanning",
       jobMessage: "Scanning…",
     }))
-    const result = await runScan(state.source, { review: state.checkFirst })
+    const result = await runScan(state.source, { review: state.checkFirst, to })
     await refresh()
     // Held for checking: straight into the review, with nothing to report
     // yet. The scan controls go back to rest, since the scan itself is done
@@ -325,7 +354,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     }))
     toast.error(message)
     settleLater("failed")
-  }, [refresh, state.source, state.checkFirst, settleLater])
+  }, [refresh, state.source, state.adf, state.checkFirst, state.emails, state.leftOut, settleLater])
 
   const closeReview = useCallback(() => {
     setState((current) =>
@@ -334,17 +363,17 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
   }, [])
 
   const sendHeld = useCallback(
-    async (id: string, rotate: number[]) => {
-      const result = await sendReview(id, rotate)
+    async (id: string, rotate: number[], to: string[]) => {
+      const result = await sendReview(id, rotate, to)
       await refresh()
-      const to = result.recipients?.join(", ") || "recipients"
+      const sentTo = result.recipients?.join(", ") || "recipients"
       setState((current) => ({
         ...current,
         review: current.review?.id === id ? { id, open: false } : current.review,
         // Only if nothing newer owns the banner.
-        ...(current.jobStatus === "scanning" ? {} : { jobStatus: "sent" as const, jobMessage: `Sent to ${to}` }),
+        ...(current.jobStatus === "scanning" ? {} : { jobStatus: "sent" as const, jobMessage: `Sent to ${sentTo}` }),
       }))
-      toast.success(`Sent to ${to}`)
+      toast.success(`Sent to ${sentTo}`)
       settleLater("sent")
     },
     [refresh, settleLater],
@@ -369,6 +398,11 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
         setState((current) => ({ ...current, draft: value, invalid: false })),
       add,
       remove,
+      pick: (to) =>
+        setState((current) => ({
+          ...current,
+          leftOut: current.emails.filter((email) => !to.includes(email)),
+        })),
       setSource: (source) =>
         setState((current) => {
           const empty = current.adf.toLowerCase().includes("empty")
