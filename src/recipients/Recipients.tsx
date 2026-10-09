@@ -25,6 +25,7 @@ import {
 
 import { MacOSSidebar, type MacOSSidebarItem } from "@/components/ui/original"
 import { StatusIndicator } from "@/components/ui/status-indicator"
+import { Switch } from "@/components/ui/switch"
 import { SwitchMode } from "@/components/ui/switch-mode"
 import { Spinner } from "@/components/ui/spinner"
 import { ClearAllButton } from "@/components/ClearAllButton"
@@ -32,9 +33,9 @@ import { Clock } from "@/components/Clock"
 import { Segmented } from "@/components/Segmented"
 import { clearScans, removeScan } from "@/lib/api"
 import { formatWhen, statusLabel } from "@/lib/format"
+import { cn } from "@/lib/utils"
 import { PrintView } from "@/print/PrintView"
 import { picked, useRecipients } from "@/recipients/context"
-import { RecipientPicker } from "@/recipients/RecipientPicker"
 
 type View = "overview" | "scan" | "recipients" | "jobs" | "print"
 
@@ -140,35 +141,51 @@ function RecipientsAddForm() {
   )
 }
 
+/**
+ * One saved address. The switch is whether scans go to it, remembered by
+ * the Worker until it is switched again. Off keeps the address on the list
+ * for later, which is the point: before, the only way to stop one getting
+ * scans was to delete it.
+ */
 function RecipientRow({ email }: { email: string }) {
-  const { actions } = useRecipients()
+  const { state, actions } = useRecipients()
   const [pending, startTransition] = useTransition()
+  const to = picked(state.emails, state.leftOut)
+  const on = to.includes(email)
 
   return (
     <li className="flex items-center justify-between gap-3 px-4 py-3">
-      <div className="flex min-w-0 items-center gap-3">
-        <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground">
-          <CheckIcon className="size-3.5" aria-hidden="true" />
-        </span>
-        <span className="truncate text-sm font-medium" translate="no">
-          {email}
-        </span>
-      </div>
-      <AnimatedButton
-        type="button"
-        variant="outline"
-        size="sm"
-        disabled={pending}
-        aria-label={`Remove ${email}`}
-        onClick={() => {
-          startTransition(async () => {
-            await actions.remove(email)
-          })
-        }}
+      <span
+        className={cn(
+          "min-w-0 truncate text-sm font-medium transition-colors duration-150",
+          on ? "text-foreground" : "text-muted-foreground"
+        )}
+        translate="no"
       >
-        {pending ? <Spinner data-icon="inline-start" /> : null}
-        Remove
-      </AnimatedButton>
+        {email}
+      </span>
+      <div className="flex shrink-0 items-center gap-4">
+        <Switch
+          checked={on}
+          aria-label={`Send scans to ${email}`}
+          onCheckedChange={(next) => actions.pick(next ? [...to, email] : to.filter((item) => item !== email))}
+        />
+        <AnimatedButton
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={pending}
+          aria-label={`Remove ${email}`}
+          onClick={() => {
+            startTransition(async () => {
+              await actions.remove(email)
+            })
+          }}
+        >
+          {pending ? <Spinner data-icon="inline-start" /> : null}
+          Remove
+        </AnimatedButton>
+      </div>
     </li>
   )
 }
@@ -309,41 +326,6 @@ function HeldScans() {
         ))}
       </ul>
     </section>
-  )
-}
-
-/**
- * Who this scan goes to, picked from the saved recipients. All of them until
- * someone taps one out, which is what every scan did before there was a pick.
- */
-function ScanRecipients() {
-  const { state, actions } = useRecipients()
-  if (!state.loaded) {
-    return null
-  }
-  const to = picked(state.emails, state.leftOut)
-  return (
-    <div className="flex flex-col gap-2">
-      <span className="text-muted-foreground text-xs font-medium">Send to</span>
-      {state.emails.length === 0 ? (
-        <p className="text-muted-foreground text-sm">
-          No recipients yet, so the scan will not be mailed. Add addresses under Recipients.
-        </p>
-      ) : (
-        <>
-          <RecipientPicker
-            label="Send to"
-            options={state.emails}
-            picked={to}
-            onChange={actions.pick}
-            disabled={state.jobStatus === "scanning"}
-          />
-          {to.length === 0 ? (
-            <p className="text-muted-foreground text-xs">Pick at least one, or the scan has nowhere to go.</p>
-          ) : null}
-        </>
-      )}
-    </div>
   )
 }
 
@@ -506,6 +488,7 @@ function OverviewView() {
 
 function ScanView() {
   const { state } = useRecipients()
+  const to = picked(state.emails, state.leftOut)
   return (
     <div className="mx-auto flex w-full max-w-lg flex-col gap-4">
       <div>
@@ -519,6 +502,22 @@ function ScanView() {
             {state.fromEmail || "—"}
           </span>
         </p>
+        {/* Read-only here. Who gets scans is switched on Recipients, and
+            saying it next to From means nobody scans without seeing it. */}
+        {state.loaded ? (
+          <p className="mt-1 text-sm text-muted-foreground">
+            To{" "}
+            {to.length ? (
+              <span className="font-medium text-foreground" translate="no">
+                {to.join(", ")}
+              </span>
+            ) : state.emails.length ? (
+              "nobody. Switch someone on under Recipients."
+            ) : (
+              "nobody yet. Add addresses under Recipients."
+            )}
+          </p>
+        ) : null}
       </div>
       {state.loadError ? (
         <Alert>
@@ -532,7 +531,6 @@ function ScanView() {
       <JobBanner />
       <ScanSourceToggle />
       <AfterScanChoice />
-      <ScanRecipients />
       <RecipientsScan />
     </div>
   )
@@ -678,7 +676,7 @@ function viewSubtitle(view: View): string {
     case "scan":
       return "Scan from the glass or the feeder."
     case "recipients":
-      return "Addresses a scan can go to. Pick which ones on each scan."
+      return "Addresses your scans go to. Switch one off to leave it out."
     case "jobs":
       return "Scans you have run."
     case "print":
