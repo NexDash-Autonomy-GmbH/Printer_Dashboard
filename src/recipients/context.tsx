@@ -30,6 +30,8 @@ export type RecipientsState = {
   leftOut: string[]
   workspaceEmails: string[]
   fromEmail: string
+  /** The display name scan mail goes out under, "NexDash". */
+  fromName: string
   printerHost: string
   model: string
   scanner: string
@@ -109,6 +111,7 @@ function applyPrinter(data: PrinterState): Partial<RecipientsState> {
       (email) => email.toLowerCase() !== fromEmail
     ),
     fromEmail: data.from_email || "",
+    fromName: data.from_name || "",
     printerHost: data.printer_host,
     model: data.model,
     scanner: data.scanner,
@@ -161,6 +164,7 @@ export function RecipientsProvider({ children }: { children: React.ReactNode }) 
     leftOut: [],
     workspaceEmails: [],
     fromEmail: "",
+    fromName: "",
     printerHost: "",
     model: "Xerox B305 MFP",
     scanner: "…",

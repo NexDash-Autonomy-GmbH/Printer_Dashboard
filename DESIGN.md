@@ -130,6 +130,15 @@ Toner bar fills may use SNMP-reported colors from the printer. Those are data, n
 ### Recipients
 
 - `Field` + `Input`. Invalid field uses `data-invalid` / `aria-invalid`.
+- Each row: the address, an on/off `Switch` for whether scans go to it (saved per person by the Worker), then Remove. Switched off, the address reads muted.
+
+### Scan mail
+
+- `src/scan/Envelope.tsx`, at the top of Scan. One bordered card, a hairline between From and To. Read-only: who gets scans is switched on Recipients, and the card's Edit goes there.
+- From: monogram, sender name, address muted.
+- To: one or two recipients as chips (monogram + full address). Three or more fold into one line: up to three overlapping monograms, the first two names, and "and N more", which never truncates. It opens the full chip list, which fades in.
+- Monograms are the first letter on `--muted`. No per-person colours; there is one accent and it is not decoration.
+- Under 640px the label moves above the value so addresses get the full width.
 
 ### Pages
 
