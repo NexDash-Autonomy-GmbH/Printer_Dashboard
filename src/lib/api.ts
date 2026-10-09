@@ -187,10 +187,13 @@ export async function removeEmail(email: string): Promise<string[]> {
   }
 }
 
-/** review: hold the PDF for its pages to be checked instead of mailing it on arrival. */
+/**
+ * review: hold the PDF for its pages to be checked instead of mailing it on arrival.
+ * to: which of the saved recipients get it. The Worker refuses anyone else.
+ */
 export async function runScan(
   source: "auto" | "platen" | "adf",
-  { review = false }: { review?: boolean } = {}
+  { review = false, to }: { review?: boolean; to: string[] }
 ): Promise<ScanResult> {
   try {
     const res = await request(
@@ -198,7 +201,7 @@ export async function runScan(
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source, review }),
+        body: JSON.stringify({ source, review, to }),
       },
       180_000
     )
@@ -250,11 +253,11 @@ export function fetchReviewPdf(id: string): Promise<ArrayBuffer> {
 }
 
 /**
- * Mails a held scan. `rotate` is one clockwise angle per page, in page order,
- * in steps of 90. The Worker turns the pages itself, so only the angles
- * travel; all zeros sends the scan exactly as it came off the scanner.
+ * Mails a held scan to `to`. `rotate` is one clockwise angle per page, in
+ * page order, in steps of 90. The Worker turns the pages itself, so only the
+ * angles travel; all zeros sends the scan exactly as it came off the scanner.
  */
-export function sendReview(id: string, rotate: number[]): Promise<ScanResult> {
+export function sendReview(id: string, rotate: number[], to: string[]): Promise<ScanResult> {
   return reviewCall(
     "Could not send the scan",
     () =>
@@ -263,7 +266,7 @@ export function sendReview(id: string, rotate: number[]): Promise<ScanResult> {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, rotate }),
+          body: JSON.stringify({ id, rotate, to }),
         },
         120_000
       ),

@@ -22,6 +22,7 @@ import { fetchReviewPdf, type ScanLog } from "@/lib/api"
 import { formatWhen } from "@/lib/format"
 import { EASE_IN_OUT, EASE_OUT, REVEAL_S, SPRING_PRESS, TURN_S } from "@/lib/motion"
 import { useRecipients } from "@/recipients/context"
+import { RecipientPicker } from "@/recipients/RecipientPicker"
 import type { Thumbnails } from "@/scan/thumbnails"
 
 /**
@@ -100,11 +101,6 @@ function shortest(from: number, to: number): number {
   return turns === 3 ? -1 : turns
 }
 
-function names(list: string[]): string {
-  if (list.length <= 2) return list.join(" and ")
-  return `${list[0]}, ${list[1]} and ${list.length - 2} more`
-}
-
 function ReviewBody({
   id,
   row,
@@ -118,7 +114,7 @@ function ReviewBody({
   busy: boolean
   setBusy: (value: boolean) => void
 }) {
-  const { actions } = useRecipients()
+  const { state, actions } = useRecipients()
   const reduce = useReducedMotion() ?? false
   const [load, setLoad] = useState<Load>({ status: "loading" })
   const [thumbs, setThumbs] = useState<string[]>([])
@@ -129,6 +125,15 @@ function ReviewBody({
   const [all, setAll] = useState<Quarter>(0)
   const [error, setError] = useState<string | null>(null)
   const [confirming, setConfirming] = useState(false)
+  // Opens on whoever was picked at scan time, and can still change: this is
+  // the last look before it goes. Taken once rather than read off the row on
+  // every render, so the chips hold still while the dialog fades out after a
+  // send, when the row stops being a held scan.
+  const [to, setTo] = useState<string[] | null>(row?.recipients ?? null)
+  const chosen = to ?? row?.recipients ?? []
+  // The saved list, plus anyone picked at scan time who has been removed
+  // from it since. They were picked, so they stay on offer.
+  const options = [...state.emails, ...(row?.recipients ?? []).filter((email) => !state.emails.includes(email))]
 
   useEffect(() => {
     let cancelled = false
@@ -204,7 +209,7 @@ function ReviewBody({
     setBusy(true)
     setError(null)
     try {
-      await actions.sendReview(id, rotate)
+      await actions.sendReview(id, rotate, chosen)
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not send the scan")
     } finally {
@@ -236,10 +241,20 @@ function ReviewBody({
           {gone
             ? "This scan is no longer waiting. It was sent, discarded or expired somewhere else."
             : load.status === "ready"
-              ? `${count === 1 ? "1 page" : `${count} pages`}${row?.recipients.length ? ` for ${names(row.recipients)}` : ""}. Turn any that came out sideways, then send.`
+              ? `${count === 1 ? "1 page" : `${count} pages`}. Turn any that came out sideways, then send.`
               : "Nothing has been sent yet. Turn any page that came out sideways, then send."}
         </AlertDialogDescription>
       </AlertDialogHeader>
+
+      {gone ? null : (
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="text-muted-foreground text-xs font-medium">Send to</span>
+          <RecipientPicker label="Send to" options={options} picked={chosen} onChange={setTo} disabled={busy} />
+          {chosen.length === 0 ? (
+            <span className="text-muted-foreground text-xs">Pick at least one to send.</span>
+          ) : null}
+        </div>
+      )}
 
       {load.status === "ready" && !gone ? (
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -324,7 +339,7 @@ function ReviewBody({
         )}
         <AlertDialogCancel disabled={busy}>{gone ? "Close" : "Later"}</AlertDialogCancel>
         {gone ? null : (
-          <AlertDialogAction disabled={busy} onClick={() => void send()}>
+          <AlertDialogAction disabled={busy || chosen.length === 0} onClick={() => void send()}>
             {busy ? "Sending…" : "Send"}
           </AlertDialogAction>
         )}

@@ -211,6 +211,34 @@ function withoutSender(list: string[], sender: string): string[] {
   return out;
 }
 
+/**
+ * The addresses a page picked for one scan, checked against the ones it was
+ * shown. Saved recipients used to all get every scan, so adding a second
+ * address meant the first could no longer get a scan on its own.
+ *
+ * Only ever a subset: the page offers nothing else, so an address outside
+ * `allowed` is a stale tab or a hand-made request, and is refused rather than
+ * quietly dropped, which would mail fewer people than the page showed.
+ */
+function pickRecipients(
+  to: unknown,
+  allowed: string[],
+  from: string
+): { ok: true; recipients: string[] } | { ok: false; error: string } {
+  if (!Array.isArray(to) || !to.every((item) => typeof item === "string")) {
+    return { ok: false, error: "to is a list of addresses" };
+  }
+  const picked = withoutSender(to, from);
+  const stray = picked.find((email) => !allowed.includes(email));
+  if (stray) {
+    return { ok: false, error: `${stray} is not one of your recipients` };
+  }
+  if (picked.length === 0 && allowed.length > 0) {
+    return { ok: false, error: "pick at least one recipient" };
+  }
+  return { ok: true, recipients: picked };
+}
+
 /** A held scan whose PDF KV no longer has. Recorded as unsent, not deleted. */
 function expire(row: ScanLog): void {
   row.stage = "expired";
@@ -537,13 +565,30 @@ export class PrinterApi extends DurableObject<Env> {
     if (request.method !== "POST") {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
-    const body = ((await request.json().catch(() => ({}))) || {}) as { source?: string; review?: boolean };
+    const body = ((await request.json().catch(() => ({}))) || {}) as {
+      source?: string;
+      review?: boolean;
+      to?: unknown;
+    };
     const source = body.source || "platen";
     // Only an explicit true holds the scan. Anything else, including a page
     // that predates review, keeps the old behaviour: mailed on arrival.
     const review = body.review === true;
     const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
-    const recipients = withoutSender(await this.emails(actor), from);
+    const saved = withoutSender(await this.emails(actor), from);
+    // No `to` is a page from before recipients could be picked: everyone.
+    const picked =
+      body.to === undefined ? { ok: true as const, recipients: saved } : pickRecipients(body.to, saved, from);
+    if (!picked.ok) {
+      return json(request, this.env, 200, {
+        ok: false,
+        stage: "scan_failed",
+        scanned: false,
+        emailed: false,
+        error: picked.error,
+      });
+    }
+    const recipients = picked.recipients;
     if (this.queued || this.active) {
       return json(request, this.env, 200, {
         ok: false,
@@ -756,7 +801,7 @@ export class PrinterApi extends DurableObject<Env> {
       return json(request, this.env, 405, { ok: false, error: "method not allowed" });
     }
 
-    const body = (await request.json().catch(() => null)) as { id?: unknown; rotate?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { id?: unknown; rotate?: unknown; to?: unknown } | null;
     const id = typeof body?.id === "string" ? body.id : "";
     const turns = parseTurns(body?.rotate);
     if (!turns) {
@@ -766,12 +811,25 @@ export class PrinterApi extends DurableObject<Env> {
     if (!row) {
       return json(request, this.env, 404, { ok: false, error: "no scan of yours is waiting under that id" });
     }
+    // Who it goes to can still change here. The review shows the ones picked
+    // at scan time plus the rest of the saved list, so either can be sent to.
+    // No `to` keeps the ones picked at scan time.
+    let recipients = row.recipients;
+    if (body?.to !== undefined) {
+      const from = (this.env.MAIL_FROM_EMAIL || "").toLowerCase();
+      const allowed = withoutSender([...row.recipients, ...(await this.emails(actor))], from);
+      const picked = pickRecipients(body.to, allowed, from);
+      if (!picked.ok) {
+        return json(request, this.env, 400, { ok: false, error: picked.error });
+      }
+      recipients = picked.recipients;
+    }
     if (this.sendClaimed(id)) {
       return json(request, this.env, 409, { ok: false, error: "that scan is already being sent" });
     }
     this.reviewSends.set(id, Date.now());
     try {
-      return await this.sendHeld(request, actor, id, row, turns);
+      return await this.sendHeld(request, actor, id, row, turns, recipients);
     } finally {
       this.reviewSends.delete(id);
     }
@@ -782,7 +840,8 @@ export class PrinterApi extends DurableObject<Env> {
     actor: string,
     id: string,
     row: ScanLog,
-    turns: number[]
+    turns: number[],
+    recipients: string[]
   ): Promise<Response> {
     const held = await this.env.PRINT_FILES.get(`review:${id}`, "arrayBuffer");
     if (!held) {
@@ -805,14 +864,16 @@ export class PrinterApi extends DurableObject<Env> {
       }
     }
     try {
-      await mailScan(this.env, row.recipients, row.name, pdf);
+      await mailScan(this.env, recipients, row.name, pdf);
     } catch (error) {
       const message = error instanceof Error ? error.message : "mail failed";
       // Still held, so the same scan can be sent again once mail works
-      // instead of being rescanned.
+      // instead of being rescanned. To the same people: the retry opens
+      // with this pick, not the one made at scan time.
       const log = await this.settleReview(id, (item) => {
         item.stage = "mail_failed";
         item.error = message;
+        item.recipients = recipients;
       });
       return json(request, this.env, 502, {
         ok: false,
@@ -829,6 +890,7 @@ export class PrinterApi extends DurableObject<Env> {
     // other order could lose it.
     const log = await this.settleReview(id, (item) => {
       item.stage = "sent";
+      item.recipients = recipients;
       delete item.error;
       delete item.review;
       delete item.expires;
@@ -840,7 +902,7 @@ export class PrinterApi extends DurableObject<Env> {
       scanned: true,
       emailed: true,
       files: [row.name],
-      recipients: row.recipients,
+      recipients,
       scans: this.ownScans(log, actor),
     });
   }
